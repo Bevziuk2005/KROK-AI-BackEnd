@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: django-backend
+    env: python
+    region: oregon
+    plan: starter
+    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput"
+    startCommand: "gunicorn project.wsgi:application -c gunicorn_conf.py"
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: project.settings.production
+      - key: DATABASE_URL
+        fromDatabase: DATABASE_URL
+      - key: OPENAI_API_KEY
+      - key: SUPABASE_URL
+      - key: SUPABASE_SERVICE_ROLE_KEY

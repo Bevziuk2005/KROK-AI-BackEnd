@@ -1,10 +1,9 @@
 from django.urls import path
-from .views import MicrosoftLoginView, MicrosoftCallbackView, LogoutView, MeView, RefreshView
+from .views import MicrosoftLoginView, MicrosoftCallbackView, LogoutView, RefreshView
 
 urlpatterns = [
-    path('microsoft/login/', MicrosoftLoginView.as_view(), name='ms-login'),
-    path('microsoft/callback/', MicrosoftCallbackView.as_view(), name='ms-callback'),
-    path('logout/', LogoutView.as_view(), name='logout'),
-    path('me/', MeView.as_view(), name='me'),
-    path('microsoft/refresh/', RefreshView.as_view(), name='ms-refresh'),
+    path('login/', MicrosoftLoginView.as_view(), name='auth-login'),
+    path('callback/', MicrosoftCallbackView.as_view(), name='auth-callback'),
+    path('refresh/', RefreshView.as_view(), name='auth-refresh'),
+    path('logout/', LogoutView.as_view(), name='auth-logout'),
 ]

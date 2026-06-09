@@ -2,17 +2,18 @@ import hashlib
 import requests
 from urllib.parse import urlencode
 from django.conf import settings
-from django.shortcuts import redirect
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
-from apps.users.serializers import MicrosoftLoginSerializer, RefreshSerializer
+from apps.users.serializers import MicrosoftLoginSerializer, RefreshSerializer, UserSerializer, MeUpdateSerializer
 from apps.users.services import create_access_token, create_refresh_token, verify_refresh_token, revoke_refresh_token
 from apps.users.models import User
 from django.utils import timezone
+from .permissions import IsAuthenticatedCustom
 
 
 class MicrosoftLoginView(APIView):
+    """Return Microsoft OAuth2 authorize URL for frontend to redirect to."""
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
@@ -32,10 +33,13 @@ class MicrosoftLoginView(APIView):
 
 
 class MicrosoftCallbackView(APIView):
+    """Exchange code for id_token, validate domain and return JWTs."""
     permission_classes = [permissions.AllowAny]
 
-    def get(self, request):
-        code = request.query_params.get('code')
+    def post(self, request):
+        # accept code in body or query params
+        code = request.data.get('code') or request.query_params.get('code')
+        redirect_uri = request.data.get('redirect') or settings.MS_REDIRECT_URI
         if not code:
             return Response({'detail': 'Missing code'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -45,7 +49,7 @@ class MicrosoftCallbackView(APIView):
             'client_secret': settings.MS_CLIENT_SECRET,
             'grant_type': 'authorization_code',
             'code': code,
-            'redirect_uri': settings.MS_REDIRECT_URI,
+            'redirect_uri': redirect_uri,
         }
         r = requests.post(token_url, data=data)
         if r.status_code != 200:
@@ -88,6 +92,8 @@ class RefreshView(APIView):
 
 
 class LogoutView(APIView):
+    permission_classes = [permissions.AllowAny]
+
     def post(self, request):
         token = request.data.get('refresh_token')
         if token:
@@ -98,6 +104,22 @@ class LogoutView(APIView):
 
 
 class MeView(APIView):
+    """Get, update or delete current user account."""
+    permission_classes = [IsAuthenticatedCustom]
+
     def get(self, request):
         user = request.user
-        return Response({'id': str(user.id), 'email': user.email})
+        serializer = UserSerializer(user)
+        return Response(serializer.data)
+
+    def patch(self, request):
+        user = request.user
+        serializer = MeUpdateSerializer(user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(UserSerializer(user).data)
+
+    def delete(self, request):
+        user = request.user
+        user.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

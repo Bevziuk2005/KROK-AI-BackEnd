@@ -11,42 +11,121 @@ pip install -r requirements.txt
 
 2. Configure `.env` with your Supabase credentials (DATABASE_URL, OPENAI_API_KEY, etc.)
 
-3. Run migrations:
+3. Initialize database with existing tables:
 ```bash
-python manage.py migrate
+python manage.py init_db
+```
+This command runs migrations with `--fake-initial`, telling Django that existing Supabase tables are already present.
+
+4. (Optional) Create a superuser for admin access:
+```bash
+python manage.py createsuperuser --email admin@krok.edu.ua
 ```
 
-4. Start dev server:
+5. Start dev server:
 ```bash
 python manage.py runserver
 ```
 
+## Database Setup (Detailed)
+
+This backend is designed to work with existing Supabase PostgreSQL tables. All Supabase-managed tables use Django's `managed = False` setting, meaning Django will not attempt to create or modify them.
+
+### Existing Supabase Tables (managed = False)
+
+Django models mapped to existing tables:
+- **users** app: `User` (public.users table)
+- **chats** app: `Chat`, `Message`, `ChatMember`, `ChatAccess` (public.chats, public.messages, etc.)
+- **files** app: `Document`, `DocumentChunk`, `ChunkEmbedding` (public.documents, public.document_chunks, public.chunk_embeddings)
+
+All these tables must exist in your Supabase database before running Django.
+
+### Django-Managed Tables
+
+Only Django-created tables:
+- **users** app: `RefreshToken` (django_refresh_tokens)
+- **files** app: `error_message` field on Document
+
+These are automatically created when you run `python manage.py init_db`.
+
+### How Migrations Work
+
+1. **Initial migrations** (`0001_initial.py` in each app) describe the structure of existing Supabase tables.
+2. When you run `python manage.py init_db`, Django marks these migrations as applied using `--fake-initial`, without actually executing them (since tables already exist).
+3. Any new Django-managed tables are created normally.
+
+### Manual Database Initialization
+
+If you prefer not to use the `init_db` command:
+
+```bash
+# Run migrations with --fake-initial to mark existing tables as applied
+python manage.py migrate --fake-initial
+
+# Verify migration status
+python manage.py showmigrations
+```
+
+### Database Connection
+
+Set `DATABASE_URL` in `.env`:
+```
+DATABASE_URL=postgresql://user:password@host:port/database
+```
+
+For Supabase:
+```
+DATABASE_URL=postgresql://postgres:password@db.supabase.co:5432/postgres
+```
+
 ## Database
-
-Models mapped to existing Supabase tables with `managed = False`:
-- **users**: User
-- **chats**: Chat, Message, ChatMember, ChatAccess
-- **files**: Document, DocumentChunk, ChunkEmbedding
-
-All models registered in Django Admin (`/admin/`).
 
 ## Admin panel (quick start)
 
-1. Apply migrations (creates only Django-managed tables such as refresh tokens):
-```bash
-cd backend
-python manage.py migrate
-```
-2. Create a superuser (for admin access):
+1. Create a superuser:
 ```bash
 python manage.py createsuperuser --email admin@krok.edu.ua
 ```
-3. Open admin: `https://<YOUR_DOMAIN>/admin/` and sign in.
+
+2. Open admin: `https://<YOUR_DOMAIN>/admin/` and sign in.
 
 Notes:
 - Existing Supabase tables are mapped with `Meta.managed = False` — Django will not alter them.
 - Admin shows `User`, `Chat`, `Message`, `Document`, `DocumentChunk`, `ChunkEmbedding` and the Django-managed `RefreshToken`.
 - If you need to add new tables, follow `ADDING_MODELS.md` to ensure migrations are non-destructive.
+
+## Database Troubleshooting
+
+### Issue: "Relation 'table_name' does not exist"
+**Cause**: Table exists in Supabase but Django hasn't been initialized correctly.
+**Solution**:
+```bash
+python manage.py init_db
+```
+
+### Issue: "Table 'table_name' already exists"
+**Cause**: You ran `migrate` without `--fake-initial`.
+**Solution**: 
+1. This is usually safe since `managed = False` prevents Django from trying to create existing tables.
+2. If you see this error, it means the initial migration wasn't marked as applied.
+3. Run: `python manage.py migrate --fake-initial apps.app_name 0001_initial`
+
+### Issue: "Permission denied" connecting to Supabase
+**Cause**: Wrong DATABASE_URL or insufficient permissions.
+**Solution**:
+1. Verify `DATABASE_URL` in `.env` is correct
+2. Check Supabase database password and user
+3. Ensure IP whitelist includes your server (if using Supabase firewall)
+
+### Issue: Migrations are stuck
+**Solution**:
+```bash
+# Check migration status
+python manage.py showmigrations
+
+# Mark a migration as applied without running it (use with caution)
+python manage.py migrate --fake app_name migration_name
+```
 
 ## Adding Models
 

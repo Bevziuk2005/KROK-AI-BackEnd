@@ -20,6 +20,7 @@ class Document(models.Model):
     status = models.CharField(max_length=50, choices=DOCUMENT_STATUS_CHOICES, default='pending')
     chat = models.ForeignKey(Chat, on_delete=models.SET_NULL, null=True, blank=True, related_name='documents')
     checksum_sha256 = models.CharField(max_length=64, blank=True, null=True)
+    error_message = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

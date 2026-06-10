@@ -93,9 +93,10 @@ def _process_document_sync(document_id):
         data = _download_from_storage(doc.storage_key)
     except Exception as exc:
         logger.exception('Failed to download document %s from storage', document_id)
+        # Save short error message for troubleshooting (no traceback exposed to user)
         doc.status = 'failed'
-        doc.updated_at = timezone.now()
-        doc.save()
+        doc.error_message = str(exc)
+        doc.save(update_fields=["status", "error_message"])
         return
 
     try:
@@ -103,8 +104,8 @@ def _process_document_sync(document_id):
     except UnicodeDecodeError as e:
         logger.exception('Failed to decode document %s: %s', document_id, e)
         doc.status = 'failed'
-        doc.updated_at = timezone.now()
-        doc.save()
+        doc.error_message = str(e)
+        doc.save(update_fields=["status", "error_message"])
         return
 
     chunks = _split_text_into_chunks(text)

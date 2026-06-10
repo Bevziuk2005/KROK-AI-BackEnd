@@ -1,7 +1,12 @@
 import os
 import logging
-from openai import OpenAI
-from openai.error import OpenAIError, APIError, RateLimitError
+try:
+    from openai import OpenAI, APIError, RateLimitError
+except Exception:
+    # openai package may be absent in some environments (tests, CI); provide safe fallbacks
+    OpenAI = None
+    APIError = Exception
+    RateLimitError = Exception
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
@@ -26,7 +31,7 @@ def get_openai():
     return _client
 
 
-@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10), retry=retry_if_exception_type((RateLimitError, APIError, OpenAIError)))
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10), retry=retry_if_exception_type((RateLimitError, APIError)))
 def embeddings_create(client: OpenAI, model: str, input_text):
     """Wrapper to create embeddings with retry and error handling."""
     if client is None:

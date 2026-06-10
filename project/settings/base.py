@@ -101,5 +101,21 @@ LOGGING = {
     'handlers': {
         'console': {'class': 'logging.StreamHandler', 'formatter': 'standard'},
     },
-    'root': {'handlers': ['console'], 'level': os.getenv('LOG_LEVEL', 'INFO')},
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'standard'},
+        'file': {
+            'class': 'logging.FileHandler',
+            'formatter': 'standard',
+            'filename': str(Path(BASE_DIR, 'logs', 'django.log')),
+        },
+    },
+    'root': {'handlers': ['console', 'file'], 'level': os.getenv('LOG_LEVEL', 'INFO')},
 }
+
+
+# Celery configuration
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', CELERY_BROKER_URL)
+CELERY_TASK_ALWAYS_EAGER = os.getenv('CELERY_TASK_ALWAYS_EAGER', 'False') == 'True'
+CELERY_TASK_ACKS_LATE = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1

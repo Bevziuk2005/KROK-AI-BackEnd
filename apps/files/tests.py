@@ -30,7 +30,7 @@ class FilesTests(TestCase):
         mock_download.return_value = b"A long text. "*100
         # mock embedding
         mock_client = MagicMock()
-        mock_client.Embedding.create.return_value = {'data':[{'embedding':[0.1,0.2,0.3]}]}
+        mock_client.embeddings.create.return_value = {'data':[{'embedding':[0.1,0.2,0.3]}]}
         mock_openai.return_value = mock_client
         r = self.client.post(f'/api/v1/files/{doc.id}/process/', **self.auth)
         self.assertEqual(r.status_code, 202)
@@ -38,7 +38,7 @@ class FilesTests(TestCase):
     @patch('apps.files.services.get_openai')
     def test_rag_search(self, mock_openai):
         mock_client = MagicMock()
-        mock_client.Embedding.create.return_value = {'data':[{'embedding':[0.1,0.2,0.3]}]}
+        mock_client.embeddings.create.return_value = {'data':[{'embedding':[0.1,0.2,0.3]}]}
         mock_openai.return_value = mock_client
         r = self.client.post('/api/v1/rag/search/', {'query':'hello', 'top_k':1}, content_type='application/json', **self.auth)
         self.assertEqual(r.status_code, 200)

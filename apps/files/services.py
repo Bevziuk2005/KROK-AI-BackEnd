@@ -1,11 +1,11 @@
 import hashlib
-import threading
+import logging
 from django.utils import timezone
 from django.conf import settings
 from apps.files.models import Document, DocumentChunk, ChunkEmbedding
 from apps.files.storage import upload_file
 from apps.common.supabase_client import get_supabase_client
-from apps.common.openai_client import get_openai
+from apps.common.openai_client import get_openai, embeddings_create
 from apps.users.models import User
 import math
 
@@ -13,6 +13,8 @@ import math
 ALLOWED_MIME = ['text/plain', 'text/markdown']
 MAX_FILE_SIZE = int(getattr(settings, 'MAX_FILE_UPLOAD_SIZE', 10 * 1024 * 1024))  # 10MB
 SUPABASE_BUCKET = getattr(settings, 'SUPABASE_STORAGE_BUCKET', 'documents')
+
+logger = logging.getLogger(__name__)
 
 
 def compute_sha256(file_bytes: bytes) -> str:
@@ -59,13 +61,27 @@ def _split_text_into_chunks(text: str, chunk_size: int = 500, overlap: int = 50)
 
 
 def _create_embeddings_for_chunks(chunks, document: Document, owner: User, model_name: str = 'text-embedding-3-small'):
-    openai = get_openai()
+    client = get_openai()
+    if not client:
+        raise RuntimeError('OpenAI client not configured')
     embeddings = []
     for idx, text in chunks:
-        resp = openai.Embedding.create(input=text, model=model_name)
-        emb = resp['data'][0]['embedding']
-        ce = ChunkEmbedding.objects.create(chunk=DocumentChunk.objects.get(document=document, chunk_index=idx), owner=owner, document=document, model_name=model_name, embedding=emb, token_count=len(text.split()))
-        embeddings.append(ce)
+        try:
+            resp = embeddings_create(client, model_name, text)
+            emb = resp['data'][0]['embedding']
+            chunk_obj = DocumentChunk.objects.get(document=document, chunk_index=idx)
+            ce = ChunkEmbedding.objects.create(chunk=chunk_obj, owner=owner, document=document, model_name=model_name, embedding=emb, token_count=len(text.split()))
+            chunk_obj.status = 'embedded'
+            chunk_obj.save()
+            embeddings.append(ce)
+        except Exception as exc:
+            logger.exception('Failed to embed chunk %s for document %s', idx, document.id)
+            try:
+                chunk_obj = DocumentChunk.objects.get(document=document, chunk_index=idx)
+                chunk_obj.status = 'failed'
+                chunk_obj.save()
+            except Exception:
+                logger.exception('Failed to update chunk status for doc %s chunk %s', document.id, idx)
     return embeddings
 
 
@@ -75,28 +91,49 @@ def _process_document_sync(document_id):
     doc.save()
     try:
         data = _download_from_storage(doc.storage_key)
-        text = data.decode('utf-8')
-        chunks = _split_text_into_chunks(text)
-        for idx, chunk_text in chunks:
-            DocumentChunk.objects.create(document=doc, owner=doc.owner, chunk_index=idx, chunk_text=chunk_text, status='pending')
-        # generate embeddings
-        _create_embeddings_for_chunks(chunks, doc, doc.owner)
-        doc.status = 'completed'
-    except Exception:
+    except Exception as exc:
+        logger.exception('Failed to download document %s from storage', document_id)
         doc.status = 'failed'
+        doc.updated_at = timezone.now()
+        doc.save()
+        return
+
+    try:
+        text = data.decode('utf-8')
+    except UnicodeDecodeError as e:
+        logger.exception('Failed to decode document %s: %s', document_id, e)
+        doc.status = 'failed'
+        doc.updated_at = timezone.now()
+        doc.save()
+        return
+
+    chunks = _split_text_into_chunks(text)
+    for idx, chunk_text in chunks:
+        DocumentChunk.objects.create(document=doc, owner=doc.owner, chunk_index=idx, chunk_text=chunk_text, status='pending')
+    # generate embeddings
+    _create_embeddings_for_chunks(chunks, doc, doc.owner)
+    doc.status = 'completed'
     doc.updated_at = timezone.now()
     doc.save()
 
 
 def process_document_background(document_id):
-    t = threading.Thread(target=_process_document_sync, args=(document_id,))
-    t.daemon = True
-    t.start()
+    # Enqueue Celery task for processing documents (preferred) if available
+    try:
+        from apps.files.celery_tasks import process_document_task
+
+        process_document_task.delay(str(document_id))
+        return
+    except Exception:
+        logger.exception('Celery not available, falling back to synchronous processing')
+        _process_document_sync(document_id)
 
 
 def rag_search(owner: User, query: str, top_k: int = 5, model_name: str = 'text-embedding-3-small'):
-    openai = get_openai()
-    resp = openai.Embedding.create(input=query, model=model_name)
+    client = get_openai()
+    if not client:
+        raise RuntimeError('OpenAI client not configured')
+    resp = embeddings_create(client, model_name, query)
     q_emb = resp['data'][0]['embedding']
     # fetch embeddings for owner
     rows = ChunkEmbedding.objects.filter(owner=owner, model_name=model_name)

@@ -68,7 +68,7 @@ def _create_embeddings_for_chunks(chunks, document: Document, owner: User, model
     for idx, text in chunks:
         try:
             resp = embeddings_create(client, model_name, text)
-            emb = resp['data'][0]['embedding']
+            emb = resp.data[0].embedding
             chunk_obj = DocumentChunk.objects.get(document=document, chunk_index=idx)
             ce = ChunkEmbedding.objects.create(chunk=chunk_obj, owner=owner, document=document, model_name=model_name, embedding=emb, token_count=len(text.split()))
             chunk_obj.status = 'embedded'
@@ -135,7 +135,7 @@ def rag_search(owner: User, query: str, top_k: int = 5, model_name: str = 'text-
     if not client:
         raise RuntimeError('OpenAI client not configured')
     resp = embeddings_create(client, model_name, query)
-    q_emb = resp['data'][0]['embedding']
+    q_emb = resp.data[0].embedding
     # fetch embeddings for owner
     rows = ChunkEmbedding.objects.filter(owner=owner, model_name=model_name)
     results = []

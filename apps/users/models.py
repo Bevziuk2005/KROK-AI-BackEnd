@@ -27,7 +27,7 @@ class User(models.Model):
 class RefreshToken(models.Model):
     """Server-side stored refresh tokens for issued JWTs."""
     id = models.BigAutoField(primary_key=True)
-    user = models.ForeignKey('apps.users.User', on_delete=models.CASCADE, related_name='refresh_tokens')
+    user = models.ForeignKey('users.User', on_delete=models.CASCADE, related_name='refresh_tokens')
     token_hash = models.CharField(max_length=128)
     created_at = models.DateTimeField(auto_now_add=True)
     revoked = models.BooleanField(default=False)

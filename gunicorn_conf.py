@@ -1,8 +1,8 @@
 import multiprocessing
 import os
 
-workers = multiprocessing.cpu_count() * 2 + 1
-threads = 4
+workers = 1
+threads = 2
 
 # Использовать PORT из environment переменной, если есть (Render)
 # Или default 8000 для локальной разработки

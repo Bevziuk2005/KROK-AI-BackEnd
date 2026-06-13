@@ -733,14 +733,6 @@ localStorage.setItem('refresh_token', tokens.refresh_token);
 
 ---
 
-## 📞 КОНТАКТИ / ПІДТРИМКА
-
-**Backend:** https://krok-ai-back.onrender.com  
-**GitHub:** https://github.com/Bevziuk2005/KROK-AI-BackEnd  
-**Issues:** https://github.com/Bevziuk2005/KROK-AI-BackEnd/issues
-
----
-
 ## ✅ CHECKLIST FOR FRONTEND DEVELOPER
 
 ```

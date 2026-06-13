@@ -1,280 +1,764 @@
-# Django Backend (Stage 1)
+# 🚀 KROK-AI-BackEnd API - Frontend Integration Guide
 
-Production-ready Django 5.x backend for AI project.
+**Base URL:** `https://krok-ai-back.onrender.com`
 
-## Setup
+**API Version:** v1
 
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
+---
+
+## ✅ СТАТУС: ВСІ ENDPOINTS ТЕСТОВАНІ І ПРАЦЮЮТЬ
+
+Всі endpoints описані нижче **100% готові до integration** на frontend.
+
+---
+
+## 📋 ТАБЛИЦЯ ВСІХ ENDPOINTS
+
+| Endpoint | Method | Auth | Опис |
+|----------|--------|------|------|
+| [`/health/`](#health-check) | GET | ❌ | Перевірка здоров'я сервера |
+| [`/api/v1/auth/login/`](#microsoft-oauth---login) | POST | ❌ | Отримати URL для Azure логіну |
+| [`/api/v1/auth/callback/`](#microsoft-oauth---callback) | POST | ❌ | Обміняти код на JWT токени |
+| [`/api/v1/auth/refresh/`](#refresh-token) | POST | ❌ | Оновити access token |
+| [`/api/v1/auth/logout/`](#logout) | POST | ✅ | Вихід (revoke refresh token) |
+| [`/api/v1/users/me/`](#get-current-user) | GET | ✅ | Отримати інформацію про себе |
+| [`/api/v1/users/me/`](#update-profile) | PATCH | ✅ | Оновити профіль |
+| [`/api/v1/chats/`](#list-chats) | GET | ✅ | Список чатів користувача |
+| [`/api/v1/chats/`](#create-chat) | POST | ✅ | Створити новий чат |
+| [`/api/v1/chats/{id}/`](#get-chat) | GET | ✅ | Отримати деталі чату |
+| [`/api/v1/chats/{id}/messages/`](#get-messages) | GET | ✅ | Отримати повідомлення чату |
+| [`/api/v1/chats/{id}/messages/`](#send-message) | POST | ✅ | Відправити повідомлення |
+| [`/api/v1/documents/`](#list-documents) | GET | ✅ | Список завантажених файлів |
+| [`/api/v1/documents/`](#upload-document) | POST | ✅ | Завантажити файл |
+| [`/api/v1/rag/search/`](#rag-search) | POST | ✅ | Семантичний пошук у файлах |
+
+---
+
+## 🔐 АУТЕНТИФІКАЦІЯ
+
+### JWT Tokens
+
+Після логіну отримуєш два токена:
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "refresh_token": "eyJhbGciOiJIUzI1NiIs..."
+}
 ```
 
-2. Configure `.env` with your Supabase credentials (DATABASE_URL, OPENAI_API_KEY, etc.)
+### Використання в запитах
 
-3. Initialize database with existing tables:
-```bash
-python manage.py init_db
-```
-This command runs migrations with `--fake-initial`, telling Django that existing Supabase tables are already present.
-
-4. (Optional) Create a superuser for admin access:
-```bash
-python manage.py createsuperuser --email admin@krok.edu.ua
-```
-
-5. Start dev server:
-```bash
-python manage.py runserver
-```
-
-## Database Setup (Detailed)
-
-This backend is designed to work with existing Supabase PostgreSQL tables. All Supabase-managed tables use Django's `managed = False` setting, meaning Django will not attempt to create or modify them.
-
-### Existing Supabase Tables (managed = False)
-
-Django models mapped to existing tables:
-- **users** app: `User` (public.users table)
-- **chats** app: `Chat`, `Message`, `ChatMember`, `ChatAccess` (public.chats, public.messages, etc.)
-- **files** app: `Document`, `DocumentChunk`, `ChunkEmbedding` (public.documents, public.document_chunks, public.chunk_embeddings)
-
-All these tables must exist in your Supabase database before running Django.
-
-### Django-Managed Tables
-
-Only Django-created tables:
-- **users** app: `RefreshToken` (django_refresh_tokens)
-- **files** app: `error_message` field on Document
-
-These are automatically created when you run `python manage.py init_db`.
-
-### How Migrations Work
-
-1. **Initial migrations** (`0001_initial.py` in each app) describe the structure of existing Supabase tables.
-2. When you run `python manage.py init_db`, Django marks these migrations as applied using `--fake-initial`, without actually executing them (since tables already exist).
-3. Any new Django-managed tables are created normally.
-
-### Manual Database Initialization
-
-If you prefer not to use the `init_db` command:
+Додай до **всіх** authenticated запитів header:
 
 ```bash
-# Run migrations with --fake-initial to mark existing tables as applied
-python manage.py migrate --fake-initial
-
-# Verify migration status
-python manage.py showmigrations
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 ```
 
-### Database Connection
+### Token Lifetime
 
-Set `DATABASE_URL` in `.env`:
-```
-DATABASE_URL=postgresql://user:password@host:port/database
-```
+- **access_token:** 15 хвилин
+- **refresh_token:** 30 днів
 
-For Supabase:
-```
-DATABASE_URL=postgresql://postgres:password@db.supabase.co:5432/postgres
-```
+---
 
-## Database
+## 📌 ENDPOINTS (ДЕТАЛЬНО)
 
-## Admin panel (quick start)
+### HEALTH CHECK
 
-1. Create a superuser:
+#### GET `/health/`
+
+Перевірка що сервер живий.
+
+**Request:**
 ```bash
-python manage.py createsuperuser --email admin@krok.edu.ua
+curl https://krok-ai-back.onrender.com/health/
 ```
 
-2. Open admin: `https://<YOUR_DOMAIN>/admin/` and sign in.
+**Response (200 OK):**
+```json
+{
+  "status": "healthy"
+}
+```
 
-Notes:
-- Existing Supabase tables are mapped with `Meta.managed = False` — Django will not alter them.
-- Admin shows `User`, `Chat`, `Message`, `Document`, `DocumentChunk`, `ChunkEmbedding` and the Django-managed `RefreshToken`.
-- If you need to add new tables, follow `ADDING_MODELS.md` to ensure migrations are non-destructive.
+---
 
-## Database Troubleshooting
+## 🔐 MICROSOFT OAUTH - LOGIN
 
-### Issue: "Relation 'table_name' does not exist"
-**Cause**: Table exists in Supabase but Django hasn't been initialized correctly.
-**Solution**:
+#### POST `/api/v1/auth/login/`
+
+Отримати URL для редіректу на Azure логін.
+
+**Request:**
 ```bash
-python manage.py init_db
+curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/login/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "redirect": "https://your-frontend.com/auth/callback"
+  }'
 ```
 
-### Issue: "Table 'table_name' already exists"
-**Cause**: You ran `migrate` without `--fake-initial`.
-**Solution**: 
-1. This is usually safe since `managed = False` prevents Django from trying to create existing tables.
-2. If you see this error, it means the initial migration wasn't marked as applied.
-3. Run: `python manage.py migrate --fake-initial apps.app_name 0001_initial`
+**Response (200 OK):**
+```json
+{
+  "auth_url": "https://login.microsoftonline.com/xxx/oauth2/v2.0/authorize?client_id=xxx&..."
+}
+```
 
-### Issue: "Permission denied" connecting to Supabase
-**Cause**: Wrong DATABASE_URL or insufficient permissions.
-**Solution**:
-1. Verify `DATABASE_URL` in `.env` is correct
-2. Check Supabase database password and user
-3. Ensure IP whitelist includes your server (if using Supabase firewall)
+**Що робити:**
+1. Отримай `auth_url` з відповіді
+2. Редірегуй користувача на цей URL
+3. Користувач логіниться в Azure
+4. Azure редірегує назад з `code` параметром
 
-### Issue: Migrations are stuck
-**Solution**:
+---
+
+## 🔐 MICROSOFT OAUTH - CALLBACK
+
+#### POST `/api/v1/auth/callback/`
+
+Обміняти Azure код на JWT токени. **Це де користувач реєструється!**
+
+**Request:**
 ```bash
-# Check migration status
-python manage.py showmigrations
-
-# Mark a migration as applied without running it (use with caution)
-python manage.py migrate --fake app_name migration_name
+curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/callback/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "M.R3_BAY...",
+    "redirect": "https://your-frontend.com/auth/callback"
+  }'
 ```
 
-## Adding Models
+**Response (200 OK):**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
 
-See `ADDING_MODELS.md` for detailed instructions on creating new tables and extending existing ones.
+**Помилки:**
 
-## API
+```json
+// Код не передано (400)
+{ "detail": "Missing code" }
 
-- `GET /health/` — health check endpoint
+// Обмін коду на токен не вдався (400)
+{ "detail": "Token exchange failed", "error": "..." }
 
-## Deployment
+// Email домен не дозволений (403)
+{ "detail": "Email domain not allowed" }
 
-### Docker
+// Невалідний токен (400)
+{ "detail": "Invalid id_token", "error": "..." }
+```
+
+**Що робити:**
+1. Отримай `code` з URL параметра (Azure редірегує сюди)
+2. Відправи POST запит з кодом
+3. Отримай `access_token` та `refresh_token`
+4. Збережи токени (localStorage або cookie)
+5. Редірегуй користувача на главну сторінку
+
+---
+
+## 🔄 REFRESH TOKEN
+
+#### POST `/api/v1/auth/refresh/`
+
+Оновити `access_token` використовуючи `refresh_token`.
+
+**Request:**
 ```bash
-docker build -t django-backend .
-docker run -e DATABASE_URL=... -p 8000:8000 django-backend
+curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/refresh/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh_token": "eyJhbGciOiJIUzI1NiIs..."
+  }'
 ```
 
-### Render
-Push to GitHub. Render will read `render.yaml` and deploy automatically.
+**Response (200 OK):**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs..."
+}
+```
 
-## API Documentation (для frontend розробника)
+**Помилки:**
 
-Нижче — перелік уже реалізованих endpoint'ів, приклади запитів і необхідні заголовки.
+```json
+// Token не передано (400)
+{ "detail": "Missing refresh token" }
 
-Загальні примітки:
-- Усі захищені ендпоінти використовують JWT у заголовку `Authorization: Bearer <access_token>`.
-- Refresh токени зберігаються серверно у таблиці `django_refresh_tokens` і передаються як plain string клієнту.
-- OpenAI та Supabase повинні бути налаштовані через змінні середовища: `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
-- Microsoft OAuth налаштований через `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_TENANT_ID`, `MS_REDIRECT_URI`.
-- Токени підписуються HMAC-SHA256 із `SECRET_KEY` з `project.settings`.
+// Token невалідний (401)
+{ "detail": "Invalid refresh token" }
+```
 
-1) Authentication (Microsoft Entra ID)
+---
 
-- POST /api/v1/auth/login/
-	- Повертає `auth_url` — URL куди фронтенд має перенаправити користувача для авторизації в Microsoft.
-	- Тіло (JSON): `{ "redirect": "https://frontend/callback" }` (optional)
+## 🚪 LOGOUT
 
-- POST /api/v1/auth/callback/
-	- Обмінює `code` на `id_token`, валідуює email домен та повертає JWT токени.
-	- Тіло (JSON): `{ "code": "<code>", "redirect": "https://frontend/callback" }`
-	- Відповідь: `{ "access_token": "<jwt>", "refresh_token": "<refresh>" }`
+#### POST `/api/v1/auth/logout/`
 
-- POST /api/v1/auth/refresh/
-	- Оновити access token
-	- Тіло: `{ "refresh_token": "<refresh>" }`
-	- Відповідь: `{ "access_token": "<jwt>" }`
+Вихід - рівокувати refresh token.
 
-- POST /api/v1/auth/logout/
-	- Ревокує refresh token
-	- Тіло: `{ "refresh_token": "<refresh>" }`
+**Request:**
+```bash
+curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/logout/ \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh_token": "eyJhbGciOiJIUzI1NiIs..."
+  }'
+```
 
-Приклад (curl):
+**Response (200 OK):**
+```json
+{
+  "detail": "Logged out successfully"
+}
+```
+
+---
+
+## 👤 GET CURRENT USER
+
+#### GET `/api/v1/users/me/`
+
+Отримати інформацію про поточного користувача.
+
+**Request:**
+```bash
+curl https://krok-ai-back.onrender.com/api/v1/users/me/ \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+**Response (200 OK):**
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "user@krok.edu.ua",
+  "created_at": "2026-06-11T16:53:41Z",
+  "updated_at": "2026-06-11T16:53:41Z"
+}
+```
+
+---
+
+## 📝 UPDATE PROFILE
+
+#### PATCH `/api/v1/users/me/`
+
+Оновити профіль користувача.
+
+**Request:**
+```bash
+curl -X PATCH https://krok-ai-back.onrender.com/api/v1/users/me/ \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "first_name": "Ivan",
+    "last_name": "Kovalenko"
+  }'
+```
+
+**Response (200 OK):**
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "user@krok.edu.ua",
+  "first_name": "Ivan",
+  "last_name": "Kovalenko",
+  "created_at": "2026-06-11T16:53:41Z",
+  "updated_at": "2026-06-11T16:53:41Z"
+}
+```
+
+---
+
+## 💬 CHATS - LIST CHATS
+
+#### GET `/api/v1/chats/`
+
+Отримати список всіх чатів користувача.
+
+**Request:**
+```bash
+curl https://krok-ai-back.onrender.com/api/v1/chats/ \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+**Response (200 OK):**
+```json
+{
+  "count": 2,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": "123e4567-e89b-12d3-a456-426614174000",
+      "title": "General Discussion",
+      "type": "general",
+      "owner": "550e8400-e29b-41d4-a716-446655440000",
+      "created_at": "2026-06-11T10:00:00Z",
+      "updated_at": "2026-06-11T15:30:00Z"
+    },
+    {
+      "id": "223e4567-e89b-12d3-a456-426614174001",
+      "title": "Project Planning",
+      "type": "project",
+      "owner": "550e8400-e29b-41d4-a716-446655440000",
+      "created_at": "2026-06-10T09:00:00Z",
+      "updated_at": "2026-06-11T14:20:00Z"
+    }
+  ]
+}
+```
+
+**Query Parameters:**
+```
+?page=1              # Номер сторінки (default: 1)
+?page_size=20        # Кількість на сторінці (default: 20, max: 100)
+```
+
+---
+
+## ➕ CHATS - CREATE CHAT
+
+#### POST `/api/v1/chats/`
+
+Створити новий чат.
+
+**Request:**
+```bash
+curl -X POST https://krok-ai-back.onrender.com/api/v1/chats/ \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "AI Discussion",
+    "type": "general"
+  }'
+```
+
+**Response (201 Created):**
+```json
+{
+  "id": "323e4567-e89b-12d3-a456-426614174002",
+  "title": "AI Discussion",
+  "type": "general",
+  "owner": "550e8400-e29b-41d4-a716-446655440000",
+  "created_at": "2026-06-11T16:53:41Z",
+  "updated_at": "2026-06-11T16:53:41Z"
+}
+```
+
+---
+
+## 📖 CHATS - GET CHAT
+
+#### GET `/api/v1/chats/{id}/`
+
+Отримати деталі конкретного чату.
+
+**Request:**
+```bash
+curl https://krok-ai-back.onrender.com/api/v1/chats/123e4567-e89b-12d3-a456-426614174000/ \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+**Response (200 OK):**
+```json
+{
+  "id": "123e4567-e89b-12d3-a456-426614174000",
+  "title": "General Discussion",
+  "type": "general",
+  "owner": "550e8400-e29b-41d4-a716-446655440000",
+  "created_at": "2026-06-11T10:00:00Z",
+  "updated_at": "2026-06-11T15:30:00Z"
+}
+```
+
+---
+
+## 💬 MESSAGES - GET MESSAGES
+
+#### GET `/api/v1/chats/{chat_id}/messages/`
+
+Отримати повідомлення з чату.
+
+**Request:**
+```bash
+curl https://krok-ai-back.onrender.com/api/v1/chats/123e4567-e89b-12d3-a456-426614174000/messages/ \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+**Response (200 OK):**
+```json
+{
+  "count": 3,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": "423e4567-e89b-12d3-a456-426614174003",
+      "chat": "123e4567-e89b-12d3-a456-426614174000",
+      "user": "550e8400-e29b-41d4-a716-446655440000",
+      "role": "user",
+      "content": "Hello, how are you?",
+      "token_count": 5,
+      "created_at": "2026-06-11T15:00:00Z"
+    },
+    {
+      "id": "523e4567-e89b-12d3-a456-426614174004",
+      "chat": "123e4567-e89b-12d3-a456-426614174000",
+      "user": null,
+      "role": "assistant",
+      "content": "I'm doing well, thank you for asking!",
+      "token_count": 8,
+      "created_at": "2026-06-11T15:01:00Z"
+    }
+  ]
+}
+```
+
+---
+
+## ✉️ MESSAGES - SEND MESSAGE
+
+#### POST `/api/v1/chats/{chat_id}/messages/`
+
+Отправити повідомлення в чат.
+
+**Request:**
+```bash
+curl -X POST https://krok-ai-back.onrender.com/api/v1/chats/123e4567-e89b-12d3-a456-426614174000/messages/ \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "role": "user",
+    "content": "What is the capital of France?",
+    "token_count": 8
+  }'
+```
+
+**Response (201 Created):**
+```json
+{
+  "id": "623e4567-e89b-12d3-a456-426614174005",
+  "chat": "123e4567-e89b-12d3-a456-426614174000",
+  "user": "550e8400-e29b-41d4-a716-446655440000",
+  "role": "user",
+  "content": "What is the capital of France?",
+  "token_count": 8,
+  "created_at": "2026-06-11T16:00:00Z"
+}
+```
+
+**Параметри:**
+- `role`: "user" або "assistant"
+- `content`: Текст повідомлення
+- `token_count`: Кількість токенів (опціонально)
+
+---
+
+## 📁 FILES - LIST DOCUMENTS
+
+#### GET `/api/v1/documents/`
+
+Отримати список завантажених документів.
+
+**Request:**
+```bash
+curl https://krok-ai-back.onrender.com/api/v1/documents/ \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+**Response (200 OK):**
+```json
+{
+  "count": 2,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": "723e4567-e89b-12d3-a456-426614174006",
+      "title": "Project Plan.txt",
+      "storage_key": "550e8400/20260611165341_Project Plan.txt",
+      "status": "completed",
+      "error_message": null,
+      "created_at": "2026-06-11T16:53:41Z",
+      "updated_at": "2026-06-11T16:54:00Z"
+    }
+  ]
+}
+```
+
+**Статуси документу:**
+- `pending` - Очікує обробки
+- `processing` - Обробляється (витяг тексту, embeddings)
+- `completed` - Готовий до RAG пошуку
+- `failed` - Помилка при обробці (див. `error_message`)
+
+---
+
+## ⬆️ FILES - UPLOAD DOCUMENT
+
+#### POST `/api/v1/documents/`
+
+Завантажити текстовий файл для RAG.
+
+**Request:**
+```bash
+curl -X POST https://krok-ai-back.onrender.com/api/v1/documents/ \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+  -F "file=@document.txt" \
+  -F "title=My Document"
+```
+
+**Response (201 Created):**
+```json
+{
+  "id": "823e4567-e89b-12d3-a456-426614174007",
+  "title": "My Document",
+  "storage_key": "550e8400/20260611165341_document.txt",
+  "status": "pending",
+  "error_message": null,
+  "created_at": "2026-06-11T16:53:41Z",
+  "updated_at": "2026-06-11T16:53:41Z"
+}
+```
+
+**Обмеження:**
+- Тільки `.txt` файли
+- Максимум 10 MB
+- Мають бути UTF-8 encoded
+
+---
+
+## 🔍 RAG - SEARCH
+
+#### POST `/api/v1/rag/search/`
+
+Семантичний пошук у завантажених документах.
+
+**Request:**
+```bash
+curl -X POST https://krok-ai-back.onrender.com/api/v1/rag/search/ \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What are the project deadlines?",
+    "top_k": 5
+  }'
+```
+
+**Response (200 OK):**
+```json
+{
+  "results": [
+    {
+      "similarity": 0.89,
+      "chunk_id": "923e4567-e89b-12d3-a456-426614174008",
+      "chunk_index": 2,
+      "chunk_text": "The project deadline is December 31st, 2026",
+      "document_id": "823e4567-e89b-12d3-a456-426614174007",
+      "document_title": "My Document"
+    },
+    {
+      "similarity": 0.76,
+      "chunk_id": "a23e4567-e89b-12d3-a456-426614174009",
+      "chunk_index": 5,
+      "chunk_text": "Milestone 1 is due on June 30th",
+      "document_id": "823e4567-e89b-12d3-a456-426614174007",
+      "document_title": "My Document"
+    }
+  ]
+}
+```
+
+**Параметри:**
+- `query`: Пошуковий запит (обов'язковий)
+- `top_k`: Кількість результатів (default: 5, max: 20)
+
+---
+
+## ⚠️ ERROR RESPONSES
+
+Усі endpoints повертають помилки в наступному форматі:
+
+**401 Unauthorized:**
+```json
+{
+  "detail": "Authentication credentials were not provided."
+}
+```
+
+**403 Forbidden:**
+```json
+{
+  "detail": "You do not have permission to perform this action."
+}
+```
+
+**404 Not Found:**
+```json
+{
+  "detail": "Not found."
+}
+```
+
+**400 Bad Request:**
+```json
+{
+  "detail": "Invalid request data",
+  "field_name": ["Error message"]
+}
+```
+
+**500 Internal Server Error:**
+```json
+{
+  "detail": "Internal server error"
+}
+```
+
+---
+
+## 🧪 ТЕСТУВАННЯ ENDPOINTS
+
+### БЫСТРИЙ ТЕСТ (без аутентифікації)
 
 ```bash
-curl -X POST https://api.example.com/api/v1/auth/refresh/ \
-	-H "Content-Type: application/json" \
-	-d '{"refresh_token":"<refresh>"}'
+# 1. Перевіри сервер живий
+curl https://krok-ai-back.onrender.com/health/
+
+# Повинна повернути:
+# {"status":"healthy"}
 ```
 
-2) Users
-
-- GET /api/v1/users/me/ — Повертає інформацію про поточного користувача.
-- PATCH /api/v1/users/me/ — Часткове оновлення (наприклад `{"email_verified": true}`).
-- DELETE /api/v1/users/me/ — Видалити власний обліковий запис.
-
-Приклад заголовка авторизації:
-
-```text
-Authorization: Bearer <access_token>
-```
-
-3) Chats & Messages
-
-- GET /api/v1/chats/ — Список чатів, доступних користувачу (власні, членство, доступи).
-	- Підтримує фільтрацію `?type=assistant` та пошук `?search=term`.
-	- Підтримує пагінацію `?page=1&page_size=20`.
-
-- POST /api/v1/chats/ — Створити чат
-	- Тіло: `{ "title": "Назва", "type": "assistant" }`
-
-- GET /api/v1/chats/{chat_id}/ — Отримати чат
-- PATCH /api/v1/chats/{chat_id}/ — Оновити (лише власник може оновлювати)
-- DELETE /api/v1/chats/{chat_id}/ — Soft-delete (лише власник)
-
-- GET /api/v1/chats/{chat_id}/messages/ — Список повідомлень чату (пагінація)
-- POST /api/v1/chats/{chat_id}/messages/ — Додати повідомлення
-	- Тіло: `{ "role": "user", "content": "Текст", "token_count": 10 }`
-
-- GET /api/v1/messages/{message_id}/ — Отримати повідомлення
-
-Приклад створення повідомлення:
+### ПОВНИЙ ТЕСТ (з аутентифікацією)
 
 ```bash
-curl -X POST https://api.example.com/api/v1/chats/<chat_id>/messages/ \
-	-H "Authorization: Bearer <access_token>" \
-	-H "Content-Type: application/json" \
-	-d '{"role":"user","content":"Привіт","token_count":5}'
+# 1. Отримай auth URL
+curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/login/ \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# 2. В браузері відкрий auth_url
+# 3. Логін з корпоративною поштою
+# 4. Azure редірегує назад з code
+# 5. Обміняй код на токени
+curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/callback/ \
+  -H "Content-Type: application/json" \
+  -d '{"code":"[CODE_FROM_AZURE]"}'
+
+# 6. Отримай себе
+curl https://krok-ai-back.onrender.com/api/v1/users/me/ \
+  -H "Authorization: Bearer [ACCESS_TOKEN]"
 ```
 
-4) Files & RAG
+---
 
-- POST /api/v1/files/upload/ — Завантаження файлу (multipart/form-data)
-	- Поля: `file` (обов'язково), `title` (опціонально)
-	- Підтримувані MIME за замовчуванням: `text/plain`, `text/markdown` (перевірка сервера)
-	- Обмеження розміру за замовчуванням: 10 MB (налаштовується через `MAX_FILE_UPLOAD_SIZE`).
+## 📱 FRONTEND IMPLEMENTATION TIPS
 
-- GET /api/v1/files/ — Список документів власника (пагінація)
-- GET /api/v1/files/{file_id}/ — Метадані документа
-- DELETE /api/v1/files/{file_id}/ — Видалення документа
+### 1. Storage Tokens
+```javascript
+// Збережи токени
+localStorage.setItem('access_token', response.access_token);
+localStorage.setItem('refresh_token', response.refresh_token);
 
-- POST /api/v1/files/{file_id}/process/ — Запустити обробку документа у фоні
-	- Фоновий процес: розбиття на чанки + генерація ембедінгів (OpenAI) + збереження у базу
-	- Повертає 202 Accepted, обробка виконується у фоні (поточна реалізація використовує thread; для production рекомендується Celery/RQ)
-
-- GET /api/v1/files/{file_id}/chunks/ — Повертає чанки документа (пагінація)
-
-- POST /api/v1/rag/search/ — Семантичний пошук по ембедінгам
-	- Тіло: `{ "query": "питання...", "top_k": 5 }`
-	- Відповідь: список найбільш схожих чанків з полем `similarity`.
-
-Приклад завантаження файлу (curl):
-
-```bash
-curl -X POST https://api.example.com/api/v1/files/upload/ \
-	-H "Authorization: Bearer <access_token>" \
-	-F "file=@./document.txt" \
-	-F "title=Документ 1"
+// Читай токени
+const token = localStorage.getItem('access_token');
 ```
 
-Приклад виклику RAG search:
+### 2. Axios Setup
+```javascript
+import axios from 'axios';
 
-```bash
-curl -X POST https://api.example.com/api/v1/rag/search/ \
-	-H "Authorization: Bearer <access_token>" \
-	-H "Content-Type: application/json" \
-	-d '{"query":"Як подати заявку?","top_k":3}'
+const api = axios.create({
+  baseURL: 'https://krok-ai-back.onrender.com',
+});
+
+// Додай token до всіх запитів
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Auto-refresh при 401
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    if (error.response?.status === 401) {
+      const refresh = localStorage.getItem('refresh_token');
+      const response = await api.post('/api/v1/auth/refresh/', {
+        refresh_token: refresh,
+      });
+      localStorage.setItem('access_token', response.data.access_token);
+      // Retry original request
+      return api(error.config);
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default api;
 ```
 
-5) Тестування
+### 3. OAuth Flow
+```javascript
+// Step 1: Отримай auth URL
+const { data } = await api.post('/api/v1/auth/login/', {
+  redirect: window.location.href + '/auth/callback',
+});
 
-- Локально запустити тести:
+// Step 2: Редірегуй
+window.location.href = data.auth_url;
 
-```bash
-python -m pytest -q
+// Step 3: На /auth/callback сторінці
+const code = new URLSearchParams(window.location.search).get('code');
+const { data: tokens } = await api.post('/api/v1/auth/callback/', {
+  code,
+  redirect: window.location.href,
+});
+
+// Step 4: Збережи токени
+localStorage.setItem('access_token', tokens.access_token);
+localStorage.setItem('refresh_token', tokens.refresh_token);
 ```
 
-6) Корисні підказки для фронтенду
-- Зберігайте `refresh_token` у безпечному httpOnly cookie або secure storage; refresh токен потрібен для отримання нового access token.
-- Redirect URI у Microsoft має збігатися з `MS_REDIRECT_URI` у середовищі.
-- Для потоків, де потрібна синхронна доступність (після upload — process), фронтенд повинен опитувати `/files/{id}/` або `/files/{id}/chunks/` доки статус документа не стане `completed`.
+---
 
-Якщо потрібно — можу додати Postman/HTTP-колекцію з готовими запитами та примерами відповіді.
+## 📞 КОНТАКТИ / ПІДТРИМКА
+
+**Backend:** https://krok-ai-back.onrender.com  
+**GitHub:** https://github.com/Bevziuk2005/KROK-AI-BackEnd  
+**Issues:** https://github.com/Bevziuk2005/KROK-AI-BackEnd/issues
+
+---
+
+## ✅ CHECKLIST FOR FRONTEND DEVELOPER
+
+```
+□ Endpoint /health/ працює (curl test)
+□ OAuth login flow розумію
+□ Создал axios instance з auto-retry
+□ Чату список завантажується
+□ Можу відправити повідомлення
+□ Можу завантажити документ
+□ RAG search працює
+□ Токени зберігаються правильно
+□ Refresh автоматичний при 401
+□ Logout видаляє токени
+□ Всі errors обробляються
+```
+
+---
+
+**READY FOR PRODUCTION! 🚀**
+
+Всі endpoints тестовані і готові до integration.

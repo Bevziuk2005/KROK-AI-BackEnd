@@ -57,7 +57,9 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'project.wsgi.application'
 
-DATABASE_URL = os.getenv('DATABASE_URL')
+#DATABASE_URL = os.getenv('DATABASE_URL')
+DATABASE_URL = 'postgresql://postgres.qgbjqzjkvykspkkvgoxs:IIdNK6lLrTRQNxAT@aws-1-eu-north-1.pooler.supabase.com:5432/postgres'
+
 if DATABASE_URL:
     DATABASES = {'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600)}
 else:

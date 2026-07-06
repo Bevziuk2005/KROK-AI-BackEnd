@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import requests
 from urllib.parse import urlencode
 from django.conf import settings
@@ -10,6 +11,8 @@ from apps.users.services import create_access_token, create_refresh_token, verif
 from apps.users.models import User
 from django.utils import timezone
 from .permissions import IsAuthenticatedCustom
+
+logger = logging.getLogger(__name__)
 
 
 class MicrosoftLoginView(APIView):
@@ -30,51 +33,6 @@ class MicrosoftLoginView(APIView):
         }
         auth_url = f"https://login.microsoftonline.com/{settings.MS_TENANT_ID}/oauth2/v2.0/authorize?{urlencode(params)}"
         return Response({'auth_url': auth_url})
-
-"""
-class MicrosoftCallbackView(APIView):
-    """Exchange code for id_token, validate domain and return JWTs."""
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request):
-        # accept code in body or query params
-        code = request.data.get('code') or request.query_params.get('code')
-        redirect_uri = request.data.get('redirect') or settings.MS_REDIRECT_URI
-        if not code:
-            return Response({'detail': 'Missing code'}, status=status.HTTP_400_BAD_REQUEST)
-
-        token_url = f"https://login.microsoftonline.com/{settings.MS_TENANT_ID}/oauth2/v2.0/token"
-        data = {
-            'client_id': settings.MS_CLIENT_ID,
-            'client_secret': settings.MS_CLIENT_SECRET,
-            'grant_type': 'authorization_code',
-            'code': code,
-            'redirect_uri': redirect_uri,
-        }
-        r = requests.post(token_url, data=data)
-        if r.status_code != 200:
-            return Response({'detail': 'Token exchange failed', 'error': r.text}, status=status.HTTP_400_BAD_REQUEST)
-        token_data = r.json()
-        id_token = token_data.get('id_token')
-        # verify id_token signature and claims using Microsoft's JWKS
-        from .microsoft import verify_id_token
-        try:
-            claims = verify_id_token(id_token)
-        except Exception as exc:
-            return Response({'detail': 'Invalid id_token', 'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-        email = claims.get('email') or claims.get('upn')
-        if not email or not email.endswith(f"@{settings.KROK_DOMAIN}"):
-            return Response({'detail': 'Email domain not allowed'}, status=status.HTTP_403_FORBIDDEN)
-
-        # create or update user
-        user, _ = User.objects.get_or_create(email=email, defaults={'created_at': timezone.now()})
-
-        access = create_access_token(user)
-        raw_refresh, rt = create_refresh_token(user)
-
-        return Response({'access_token': access, 'refresh_token': raw_refresh})
-"""
 
 class MicrosoftCallbackView(APIView):
     """Exchange code for id_token, validate domain and return JWTs."""

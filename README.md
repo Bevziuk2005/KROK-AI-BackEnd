@@ -18,7 +18,7 @@
 |----------|--------|------|------|
 | [`/health/`](#health-check) | GET | ❌ | Перевірка здоров'я сервера |
 | [`/api/v1/auth/login/`](#microsoft-oauth---login) | POST | ❌ | Отримати URL для Azure логіну |
-| [`/api/v1/auth/callback/`](#microsoft-oauth---callback) | POST | ❌ | Обміняти код на JWT токени |
+| [`/api/v1/auth/callback/`](#microsoft-oauth---callback) | GET / POST | ❌ | Обміняти код на JWT токени |
 | [`/api/v1/auth/refresh/`](#refresh-token) | POST | ❌ | Оновити access token |
 | [`/api/v1/auth/logout/`](#logout) | POST | ✅ | Вихід (revoke refresh token) |
 | [`/api/v1/users/me/`](#get-current-user) | GET | ✅ | Отримати інформацію про себе |
@@ -28,8 +28,8 @@
 | [`/api/v1/chats/{id}/`](#get-chat) | GET | ✅ | Отримати деталі чату |
 | [`/api/v1/chats/{id}/messages/`](#get-messages) | GET | ✅ | Отримати повідомлення чату |
 | [`/api/v1/chats/{id}/messages/`](#send-message) | POST | ✅ | Відправити повідомлення |
-| [`/api/v1/documents/`](#list-documents) | GET | ✅ | Список завантажених файлів |
-| [`/api/v1/documents/`](#upload-document) | POST | ✅ | Завантажити файл |
+| [`/api/v1/files/`](#list-documents) | GET | ✅ | Список завантажених файлів |
+| [`/api/v1/files/`](#upload-document) | POST | ✅ | Завантажити файл |
 | [`/api/v1/rag/search/`](#rag-search) | POST | ✅ | Семантичний пошук у файлах |
 
 ---
@@ -59,6 +59,29 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 
 - **access_token:** 15 хвилин
 - **refresh_token:** 30 днів
+
+---
+
+## 🌐 ЩО ПОКАЗУЄТЬСЯ ПРИ ПРЯМОМУ ПЕРЕХОДІ В БРАУЗЕРІ
+
+Більшість ендпоінтів — це **POST-only API-роути** без фронтенд-сторінки. Якщо просто вставити посилання в адресний рядок (тобто зробити GET), браузер отримає:
+
+| Посилання | Що покаже прямий GET-перехід |
+|---|---|
+| `/health/` | JSON `{"status": "healthy"}` — працює і в браузері, бо це GET-ендпоінт |
+| `/api/v1/auth/login/` | **405 Method Not Allowed** (DRF Browsable API покаже форму для POST-запиту, якщо `DEBUG=True`, або чистий 405 JSON у продакшн-режимі) |
+| `/api/v1/auth/callback/?code=...` | HTML-сторінка зі спінером → редірект на `/dashboard` (реальний сценарій після логіну в Azure) |
+| `/api/v1/auth/callback/` (без `?code=`) | HTML-сторінка з помилкою "Missing code", статус 400 |
+| `/api/v1/auth/refresh/` | 405 Method Not Allowed (тільки POST) |
+| `/api/v1/auth/logout/` | 405 Method Not Allowed (тільки POST) |
+| `/api/v1/users/me/` | 401 Unauthorized (без токена) — GET підтримується, але потребує `Authorization: Bearer ...` |
+| `/api/v1/chats/` | 401 Unauthorized без токена; з токеном — JSON список чатів |
+| `/api/v1/chats/{id}/messages/` | Підтримує і GET, і POST (кастомний `@action`) — з токеном покаже список повідомлень |
+| `/api/v1/files/` | 401 Unauthorized без токена (⚠️ реальний шлях — `/files/`, не `/documents/`, див. нижче) |
+| `/api/v1/rag/search/` | 405 Method Not Allowed на GET (тільки POST) |
+| `/admin/` | Стандартна Django admin-сторінка логіну |
+
+⚠️ **Важлива розбіжність:** у попередній версії цього README фігурував шлях `/api/v1/documents/` — за фактичним `apps/files/urls.py` роут зареєстровано як **`/api/v1/files/`** (`router.register(r'files', FileViewSet)`). У цій версії всі приклади вже виправлено на `/api/v1/files/`.
 
 ---
 
@@ -116,9 +139,48 @@ curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/login/ \
 
 ## 🔐 MICROSOFT OAUTH - CALLBACK
 
-#### POST `/api/v1/auth/callback/`
+#### GET / POST `/api/v1/auth/callback/`
 
 Обміняти Azure код на JWT токени. **Це де користувач реєструється!**
+
+⚠️ **Важливо:** ендпоінт має ДВІ різні поведінки залежно від методу — це не просто "той самий" запит у двох варіантах.
+
+---
+
+**GET `/api/v1/auth/callback/?code=...`** — основний сценарій (production)
+
+Це саме той URL, на який Azure AD **реально редіректить браузер користувача** після логіну (`response_mode=query`, тому Azure додає `?code=...` до `redirect_uri` і робить GET). Тобто при прямому переході за посиланням із запиту `https://krok-ai-back.onrender.com/api/v1/auth/callback/` (як у вашому прикладі) — це і є той шлях, який спрацьовує щоразу після логіну в Azure.
+
+Що відбувається на сервері:
+1. Бере `code` з query-параметра
+2. Обмінює його на `id_token` через Microsoft token endpoint
+3. Валідує `id_token` і перевіряє домен пошти (має бути `@KROK_DOMAIN`)
+4. Створює/оновлює користувача, генерує `access_token` і `refresh_token`
+5. Повертає **не JSON, а готову HTML-сторінку** (`text/html`), яка:
+   - показує спінер "Логіну вас..."
+   - JS-скриптом кладе токени в `localStorage`
+   - через 1 секунду редіректить на `/dashboard`
+
+**Що покаже прямий перехід за посиланням без `?code=...`** (як у вашому запиті):
+HTML-сторінка з повідомленням про помилку (⚠️ **"Помилка входу"**, текст `Missing code`), статус **400 Bad Request**, і кнопка "Спробувати знову" (веде на `/login`). Тобто ніякого JSON — просто сторінка помилки, бо `code` беруть із query, а Azure ще не встиг його підставити.
+
+Приклад HTML-відповіді при помилці:
+```
+⚠️ Помилка входу
+Missing code
+На жаль, не вдалося вас авторізувати
+[Спробувати знову]
+```
+
+Аналогічно HTML з помилкою повертається і якщо:
+- обмін коду на токен не вдався (`Token exchange failed: ...`)
+- `id_token` невалідний (`Invalid token: ...`)
+- email не з дозволеного домену (`Email domain not allowed. Use @...`)
+- будь-яка інша непередбачена помилка (`Unexpected error: ...`)
+
+---
+
+**POST `/api/v1/auth/callback/`** — залишено для зворотної сумісності (наприклад, якщо фронтенд сам забирає `code` з URL і шле його напряму)
 
 **Request:**
 ```bash
@@ -130,7 +192,7 @@ curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/callback/ \
   }'
 ```
 
-**Response (200 OK):**
+**Response (200 OK, JSON):**
 ```json
 {
   "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
@@ -138,7 +200,7 @@ curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/callback/ \
 }
 ```
 
-**Помилки:**
+**Помилки (JSON, на відміну від GET-варіанту):**
 
 ```json
 // Код не передано (400)
@@ -154,12 +216,9 @@ curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/callback/ \
 { "detail": "Invalid id_token", "error": "..." }
 ```
 
-**Що робити:**
-1. Отримай `code` з URL параметра (Azure редірегує сюди)
-2. Відправи POST запит з кодом
-3. Отримай `access_token` та `refresh_token`
-4. Збережи токени (localStorage або cookie)
-5. Редірегуй користувача на главну сторінку
+**Що робити (фронтенд):**
+- Якщо у вас класичний SPA-фронтенд на окремому домені — використовуйте **POST** і самі керуйте токенами та редіректом.
+- Якщо `redirect_uri` в Azure App Registration вказує прямо на бекенд (`.../api/v1/auth/callback/`) — спрацює **GET**-сценарій, і бекенд сам віддасть HTML зі збереженням токенів у `localStorage` та редіректом на `/dashboard` (це поточна production-конфігурація на Render).
 
 ---
 
@@ -464,13 +523,13 @@ curl -X POST https://krok-ai-back.onrender.com/api/v1/chats/123e4567-e89b-12d3-a
 
 ## 📁 FILES - LIST DOCUMENTS
 
-#### GET `/api/v1/documents/`
+#### GET `/api/v1/files/`
 
 Отримати список завантажених документів.
 
 **Request:**
 ```bash
-curl https://krok-ai-back.onrender.com/api/v1/documents/ \
+curl https://krok-ai-back.onrender.com/api/v1/files/ \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
 ```
 
@@ -504,13 +563,13 @@ curl https://krok-ai-back.onrender.com/api/v1/documents/ \
 
 ## ⬆️ FILES - UPLOAD DOCUMENT
 
-#### POST `/api/v1/documents/`
+#### POST `/api/v1/files/`
 
 Завантажити текстовий файл для RAG.
 
 **Request:**
 ```bash
-curl -X POST https://krok-ai-back.onrender.com/api/v1/documents/ \
+curl -X POST https://krok-ai-back.onrender.com/api/v1/files/ \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
   -F "file=@document.txt" \
   -F "title=My Document"

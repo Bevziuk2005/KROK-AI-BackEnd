@@ -1,5 +1,6 @@
 from django.db import models
 import uuid
+from pgvector.django import VectorField
 from apps.users.models import User
 from apps.chats.models import Chat
 
@@ -65,10 +66,9 @@ class DocumentChunk(models.Model):
 
 
 class ChunkEmbedding(models.Model):
-    """Maps public.chunk_embeddings table from Supabase
-    
-    Note: embedding field is stored as vector type in Supabase.
-    In Django, we store it as a JSON array of floats.
+    """Maps public.chunk_embeddings table from Supabase.
+
+    The embedding is stored as a pgvector column for efficient similarity search.
     """
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -77,7 +77,7 @@ class ChunkEmbedding(models.Model):
     chat = models.ForeignKey(Chat, on_delete=models.SET_NULL, null=True, blank=True)
     document = models.ForeignKey(Document, on_delete=models.CASCADE)
     model_name = models.TextField()  # e.g., 'text-embedding-3-small'
-    embedding = models.JSONField()  # List of floats representing vector
+    embedding = VectorField(dimensions=1536, null=True, blank=True)
     token_count = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

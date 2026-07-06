@@ -1,3 +1,4 @@
+import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
@@ -9,6 +10,8 @@ from apps.files.serializers import DocumentUploadSerializer, DocumentSerializer,
 from apps.files.services import save_uploaded_file, process_document_background, rag_search
 from apps.users.authentication import JWTAuthentication
 from apps.users.permissions import IsAuthenticatedCustom
+
+logger = logging.getLogger(__name__)
 
 
 class StandardPagination(PageNumberPagination):
@@ -47,6 +50,12 @@ class FileViewSet(viewsets.ViewSet):
             doc = save_uploaded_file(request.user, f, title=title)
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            process_document_background(doc.id)
+        except Exception:
+            logger.exception('Failed to trigger document processing for %s', doc.id)
+
         out = DocumentSerializer(doc)
         return Response(out.data, status=status.HTTP_201_CREATED)
 

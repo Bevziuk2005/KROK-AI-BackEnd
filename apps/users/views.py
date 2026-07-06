@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework import status, permissions
 from apps.users.serializers import MicrosoftLoginSerializer, RefreshSerializer, UserSerializer, MeUpdateSerializer
 from apps.users.services import create_access_token, create_refresh_token, verify_refresh_token, revoke_refresh_token
-from apps.users.models import User
+from apps.users.models import RefreshToken, User
 from django.utils import timezone
 from .permissions import IsAuthenticatedCustom
 
@@ -343,14 +343,17 @@ class RefreshView(APIView):
 
 
 class LogoutView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [IsAuthenticatedCustom]
 
     def post(self, request):
         token = request.data.get('refresh_token')
         if token:
-            rt = verify_refresh_token(token)
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            rt = RefreshToken.objects.filter(user=request.user, token_hash=token_hash).first()
             if rt:
                 revoke_refresh_token(rt)
+        else:
+            RefreshToken.objects.filter(user=request.user, revoked=False).update(revoked=True)
         return Response({'detail': 'Logged out'})
 
 

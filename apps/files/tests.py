@@ -35,6 +35,21 @@ class FilesTests(TestCase):
         r = self.client.post(f'/api/v1/files/{doc.id}/process/', **self.auth)
         self.assertEqual(r.status_code, 202)
 
+    @patch('apps.files.views.process_document_background')
+    @patch('apps.files.services.upload_file')
+    def test_upload_triggers_processing(self, mock_upload, mock_process):
+        mock_upload.return_value = True
+        f = BytesIO(b'Hello world. This is a test document.')
+        f.name = 'doc.txt'
+        f.content_type = 'text/plain'
+        r = self.client.post('/api/v1/files/upload/', {'file': f}, **self.auth)
+        self.assertEqual(r.status_code, 201)
+        mock_process.assert_called_once()
+
+    def test_logout_requires_authentication(self):
+        r = self.client.post('/api/v1/auth/logout/', {'refresh_token': 'dummy'}, content_type='application/json')
+        self.assertEqual(r.status_code, 401)
+
     @patch('apps.files.services.get_openai')
     def test_rag_search(self, mock_openai):
         mock_client = MagicMock()

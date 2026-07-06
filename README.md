@@ -29,8 +29,8 @@
 | [`/api/v1/chats/{id}/messages/`](#get-messages) | GET | ✅ | Отримати повідомлення чату |
 | [`/api/v1/chats/{id}/messages/`](#send-message) | POST | ✅ | Відправити повідомлення |
 | [`/api/v1/files/`](#list-documents) | GET | ✅ | Список завантажених файлів |
-| [`/api/v1/files/`](#upload-document) | POST | ✅ | Завантажити файл |
-| [`/api/v1/rag/search/`](#rag-search) | POST | ✅ | Семантичний пошук у файлах |
+| [`/api/v1/files/upload/`](#files---upload-document) | POST | ✅ | Завантажити файл (автоматично запускає обробку) |
+| [`/api/v1/rag/search/`](#rag-search) | POST | ✅ | Векторний пошук у файлах через pgvector |
 
 ---
 
@@ -59,6 +59,16 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 
 - **access_token:** 15 хвилин
 - **refresh_token:** 30 днів
+
+### 🔒 Production Environment Variables
+
+У production-середовищі сервер тепер вимагає наступних змінних без дефолтів:
+
+- `SECRET_KEY` — обов’язковий, сервер не стартує без нього
+- `CORS_ALLOWED_ORIGINS` — обов’язковий, список дозволених origin, розділений комами
+- `ALLOWED_HOSTS` — обов’язковий, список хостів, розділений комами
+
+Якщо одна з них не задана, Django зупиняється на старті з помилкою `ImproperlyConfigured`.
 
 ---
 
@@ -260,24 +270,23 @@ curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/refresh/ \
 
 #### POST `/api/v1/auth/logout/`
 
-Вихід - рівокувати refresh token.
+Вихід — відкликання refresh token для поточного користувача. Endpoint вимагає `Authorization: Bearer ...`.
 
 **Request:**
 ```bash
 curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/logout/ \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
-  -H "Content-Type: application/json" \
-  -d '{
-    "refresh_token": "eyJhbGciOiJIUzI1NiIs..."
-  }'
+  -H "Content-Type: application/json"
 ```
 
 **Response (200 OK):**
 ```json
 {
-  "detail": "Logged out successfully"
+  "detail": "Logged out"
 }
 ```
+
+Якщо у тілі передано `refresh_token`, він буде відкликаний лише для поточного користувача. Якщо токен не передано, backend відкликає всі активні refresh tokens цього користувача.
 
 ---
 
@@ -563,13 +572,13 @@ curl https://krok-ai-back.onrender.com/api/v1/files/ \
 
 ## ⬆️ FILES - UPLOAD DOCUMENT
 
-#### POST `/api/v1/files/`
+#### POST `/api/v1/files/upload/`
 
-Завантажити текстовий файл для RAG.
+Завантажити файл для RAG. Після збереження документу обробка стартує автоматично через `process_document_background(doc.id)`.
 
 **Request:**
 ```bash
-curl -X POST https://krok-ai-back.onrender.com/api/v1/files/ \
+curl -X POST https://krok-ai-back.onrender.com/api/v1/files/upload/ \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
   -F "file=@document.txt" \
   -F "title=My Document"
@@ -588,10 +597,14 @@ curl -X POST https://krok-ai-back.onrender.com/api/v1/files/ \
 }
 ```
 
+**Опційний ре-трай обробки:**
+- Якщо документ впав у `failed`, можна вручну повторити обробку через `POST /api/v1/files/{id}/process/`.
+- Для нових upload це робити не потрібно — обробка вже запускається автоматично.
+
 **Обмеження:**
-- Тільки `.txt` файли
+- Дозволені типи: `text/plain`, `text/markdown`, `application/pdf`
 - Максимум 10 MB
-- Мають бути UTF-8 encoded
+- Для текстових файлів очікується UTF-8; для PDF текст витягується перед чанкінгом
 
 ---
 
@@ -599,7 +612,7 @@ curl -X POST https://krok-ai-back.onrender.com/api/v1/files/ \
 
 #### POST `/api/v1/rag/search/`
 
-Семантичний пошук у завантажених документах.
+Векторний пошук у завантажених документах через pgvector.
 
 **Request:**
 ```bash
@@ -621,16 +634,14 @@ curl -X POST https://krok-ai-back.onrender.com/api/v1/rag/search/ \
       "chunk_id": "923e4567-e89b-12d3-a456-426614174008",
       "chunk_index": 2,
       "chunk_text": "The project deadline is December 31st, 2026",
-      "document_id": "823e4567-e89b-12d3-a456-426614174007",
-      "document_title": "My Document"
+      "document_id": "823e4567-e89b-12d3-a456-426614174007"
     },
     {
       "similarity": 0.76,
       "chunk_id": "a23e4567-e89b-12d3-a456-426614174009",
       "chunk_index": 5,
       "chunk_text": "Milestone 1 is due on June 30th",
-      "document_id": "823e4567-e89b-12d3-a456-426614174007",
-      "document_title": "My Document"
+      "document_id": "823e4567-e89b-12d3-a456-426614174007"
     }
   ]
 }

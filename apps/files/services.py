@@ -1,16 +1,19 @@
 import hashlib
 import logging
+import mimetypes
+from io import BytesIO
 from django.utils import timezone
 from django.conf import settings
+from django.db.models import Value
+from pgvector.django import CosineDistance
 from apps.files.models import Document, DocumentChunk, ChunkEmbedding
 from apps.files.storage import upload_file
 from apps.common.supabase_client import get_supabase_client
 from apps.common.openai_client import get_openai, embeddings_create
 from apps.users.models import User
-import math
 
 
-ALLOWED_MIME = ['text/plain', 'text/markdown']
+ALLOWED_MIME = ['text/plain', 'text/markdown', 'application/pdf']
 MAX_FILE_SIZE = int(getattr(settings, 'MAX_FILE_UPLOAD_SIZE', 10 * 1024 * 1024))  # 10MB
 SUPABASE_BUCKET = getattr(settings, 'SUPABASE_STORAGE_BUCKET', 'documents')
 
@@ -23,9 +26,12 @@ def compute_sha256(file_bytes: bytes) -> str:
 
 def save_uploaded_file(owner: User, file_obj, title: str = '') -> Document:
     # validation
-    content_type = file_obj.content_type
+    content_type = file_obj.content_type or mimetypes.guess_type(file_obj.name)[0] or ''
     if content_type not in ALLOWED_MIME:
-        raise ValueError('Unsupported MIME type')
+        if file_obj.name and str(file_obj.name).lower().endswith('.pdf'):
+            content_type = 'application/pdf'
+        else:
+            raise ValueError('Unsupported MIME type')
     file_obj.seek(0)
     data = file_obj.read()
     if len(data) > MAX_FILE_SIZE:
@@ -85,6 +91,29 @@ def _create_embeddings_for_chunks(chunks, document: Document, owner: User, model
     return embeddings
 
 
+def _extract_text_from_bytes(data: bytes, content_type: str | None = None, file_name: str | None = None) -> str:
+    detected_type = content_type or mimetypes.guess_type(file_name or '')[0] or ''
+    if detected_type == 'application/pdf' or (file_name and str(file_name).lower().endswith('.pdf')):
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            try:
+                import pdfplumber
+            except ImportError as exc:
+                raise RuntimeError('PDF support requires pypdf or pdfplumber') from exc
+            with pdfplumber.open(BytesIO(data)) as pdf:
+                pages = [page.extract_text() or '' for page in pdf.pages]
+            return '\n'.join(pages)
+
+        reader = PdfReader(BytesIO(data))
+        return '\n'.join(page.extract_text() or '' for page in reader.pages)
+
+    try:
+        return data.decode('utf-8')
+    except UnicodeDecodeError as exc:
+        raise ValueError('Only UTF-8 text files and PDFs are supported') from exc
+
+
 def _process_document_sync(document_id):
     doc = Document.objects.get(id=document_id)
     doc.status = 'processing'
@@ -93,25 +122,23 @@ def _process_document_sync(document_id):
         data = _download_from_storage(doc.storage_key)
     except Exception as exc:
         logger.exception('Failed to download document %s from storage', document_id)
-        # Save short error message for troubleshooting (no traceback exposed to user)
         doc.status = 'failed'
         doc.error_message = str(exc)
         doc.save(update_fields=["status", "error_message"])
         return
 
     try:
-        text = data.decode('utf-8')
-    except UnicodeDecodeError as e:
-        logger.exception('Failed to decode document %s: %s', document_id, e)
+        text = _extract_text_from_bytes(data, file_name=doc.title or doc.storage_key)
+    except Exception as exc:
+        logger.exception('Failed to extract text from document %s: %s', document_id, exc)
         doc.status = 'failed'
-        doc.error_message = str(e)
+        doc.error_message = str(exc)
         doc.save(update_fields=["status", "error_message"])
         return
 
     chunks = _split_text_into_chunks(text)
     for idx, chunk_text in chunks:
         DocumentChunk.objects.create(document=doc, owner=doc.owner, chunk_index=idx, chunk_text=chunk_text, status='pending')
-    # generate embeddings
     _create_embeddings_for_chunks(chunks, doc, doc.owner)
     doc.status = 'completed'
     doc.updated_at = timezone.now()
@@ -136,21 +163,21 @@ def rag_search(owner: User, query: str, top_k: int = 5, model_name: str = 'text-
         raise RuntimeError('OpenAI client not configured')
     resp = embeddings_create(client, model_name, query)
     q_emb = resp.data[0].embedding
-    # fetch embeddings for owner
-    rows = ChunkEmbedding.objects.filter(owner=owner, model_name=model_name)
-    results = []
-    def cosine(a, b):
-        da = sum(x*x for x in a)
-        db = sum(x*x for x in b)
-        dot = sum(x*y for x,y in zip(a,b))
-        if da==0 or db==0:
-            return 0.0
-        return dot / (math.sqrt(da)*math.sqrt(db))
-    for r in rows:
-        sim = cosine(q_emb, r.embedding)
-        results.append((sim, r))
-    results.sort(key=lambda x: x[0], reverse=True)
+
+    rows = (
+        ChunkEmbedding.objects.filter(owner=owner, model_name=model_name)
+        .annotate(distance=CosineDistance('embedding', Value(q_emb)))
+        .order_by('distance')[:top_k]
+    )
+
     out = []
-    for sim, r in results[:top_k]:
-        out.append({'similarity': sim, 'chunk_id': str(r.chunk.id), 'chunk_index': r.chunk.chunk_index, 'chunk_text': r.chunk.chunk_text, 'document_id': str(r.document.id)})
+    for r in rows:
+        similarity = max(1.0 - float(r.distance), 0.0) if r.distance is not None else 0.0
+        out.append({
+            'similarity': similarity,
+            'chunk_id': str(r.chunk.id),
+            'chunk_index': r.chunk.chunk_index,
+            'chunk_text': r.chunk.chunk_text,
+            'document_id': str(r.document.id),
+        })
     return out

@@ -20,7 +20,7 @@
 | [`/api/v1/auth/login/`](#microsoft-oauth---login) | POST | ❌ | Отримати URL для Azure логіну |
 | [`/api/v1/auth/callback/`](#microsoft-oauth---callback) | GET / POST | ❌ | Обміняти код на JWT токени |
 | [`/api/v1/auth/refresh/`](#refresh-token) | POST | ❌ | Оновити access token |
-| [`/api/v1/auth/logout/`](#logout) | POST | ✅ | Вихід (revoke refresh token) |
+| [`/api/v1/auth/logout/`](#logout) | POST | ✅ Auth | Вихід (revoke refresh token; потребує Authorization header) |
 | [`/api/v1/users/me/`](#get-current-user) | GET | ✅ | Отримати інформацію про себе |
 | [`/api/v1/users/me/`](#update-profile) | PATCH | ✅ | Оновити профіль |
 | [`/api/v1/chats/`](#list-chats) | GET | ✅ | Список чатів користувача |
@@ -62,13 +62,13 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 
 ### 🔒 Production Environment Variables
 
-У production-середовищі сервер тепер вимагає наступних змінних без дефолтів:
+У production-середовищі варто задати такі змінні явно:
 
-- `SECRET_KEY` — обов’язковий, сервер не стартує без нього
-- `CORS_ALLOWED_ORIGINS` — обов’язковий, список дозволених origin, розділений комами
-- `ALLOWED_HOSTS` — обов’язковий, список хостів, розділений комами
+- `SECRET_KEY` — обов’язковий для Django; у production без нього піднімається `ImproperlyConfigured` під час старту.
+- `CORS_ALLOWED_ORIGINS` — для production бажано задати список дозволених origin, розділений комами.
+- `ALLOWED_HOSTS` — для production бажано задати список хостів, розділений комами.
 
-Якщо одна з них не задана, Django зупиняється на старті з помилкою `ImproperlyConfigured`.
+У поточній конфігурації саме `SECRET_KEY` має явну перевірку на старті; для `CORS_ALLOWED_ORIGINS` і `ALLOWED_HOSTS` значення слід задати явно, щоб уникнути неочікуваних налаштувань у продакшні.
 
 ---
 
@@ -270,7 +270,7 @@ curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/refresh/ \
 
 #### POST `/api/v1/auth/logout/`
 
-Вихід — відкликання refresh token для поточного користувача. Endpoint вимагає `Authorization: Bearer ...`.
+Вихід — відкликання refresh token для поточного користувача. Endpoint потребує валідний JWT в заголовку `Authorization: Bearer ...`.
 
 **Request:**
 ```bash
@@ -612,7 +612,7 @@ curl -X POST https://krok-ai-back.onrender.com/api/v1/files/upload/ \
 
 #### POST `/api/v1/rag/search/`
 
-Векторний пошук у завантажених документах через pgvector.
+Векторний пошук у завантажених документах через pgvector (embeddings + cosine distance у PostgreSQL).
 
 **Request:**
 ```bash

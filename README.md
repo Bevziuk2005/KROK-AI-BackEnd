@@ -123,27 +123,35 @@ curl https://krok-ai-back.onrender.com/health/
 
 Отримати URL для редіректу на Azure логін.
 
+> Новий контракт: `redirect` у POST `/login/` — це не `redirect_uri` для Azure. Це поле означає кінцевий фронтенд URL, куди користувач має потрапити після успішної авторизації. Бекенд сам гарантує, що Azure отримає фіксований `redirect_uri` із `settings.MS_REDIRECT_URI`, а бажаний фронтенд URL передається через `state`.
+
 **Request:**
 ```bash
 curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/login/ \
   -H "Content-Type: application/json" \
   -d '{
-    "redirect": "https://your-frontend.com/auth/callback"
+    "redirect": "https://bevziuk2005.github.io/KROK-AI-FrontEnd/dashboard"
   }'
 ```
 
 **Response (200 OK):**
 ```json
 {
-  "auth_url": "https://login.microsoftonline.com/xxx/oauth2/v2.0/authorize?client_id=xxx&..."
+  "auth_url": "https://login.microsoftonline.com/xxx/oauth2/v2.0/authorize?client_id=xxx&redirect_uri=https%3A%2F%2Fkrok-ai-back.onrender.com%2Fapi%2Fv1%2Fauth%2Fcallback%2F&state=..."
 }
 ```
 
 **Що робити:**
-1. Отримай `auth_url` з відповіді
-2. Редірегуй користувача на цей URL
-3. Користувач логіниться в Azure
-4. Azure редірегує назад з `code` параметром
+1. Отримай `auth_url` з відповіді.
+2. Редірегуй користувача на цей URL.
+3. Azure поверне користувача на бекенд `redirect_uri` з `code` та `state`.
+4. Бекенд обміняє код на токени, перевірить `state`, і завершить редірект до дозволеного фронтенд-URL.
+
+**Безпека:**
+- `redirect_uri` для Azure завжди фіксований і не береться з тіла запиту.
+- `redirect` використовується лише для формування `state`.
+- Дозволений список фронтенд-доменів визначається через `ALLOWED_FRONTEND_REDIRECTS`.
+- Якщо `state` відсутній або невалідний — використовується `FRONTEND_DEFAULT_REDIRECT`.
 
 ---
 
@@ -159,17 +167,24 @@ curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/login/ \
 
 **GET `/api/v1/auth/callback/?code=...`** — основний сценарій (production)
 
-Це саме той URL, на який Azure AD **реально редіректить браузер користувача** після логіну (`response_mode=query`, тому Azure додає `?code=...` до `redirect_uri` і робить GET). Тобто при прямому переході за посиланням із запиту `https://krok-ai-back.onrender.com/api/v1/auth/callback/` (як у вашому прикладі) — це і є той шлях, який спрацьовує щоразу після логіну в Azure.
+Це той URL, на який Azure AD **реально редіректить браузер користувача** після логіну (`response_mode=query`, тому Azure додає `?code=...` до фіксованого backend `redirect_uri` і робить GET). Важливо: `redirect_uri` для Azure завжди дорівнює `settings.MS_REDIRECT_URI` і не залежить від `redirect` у POST `/login/`.
 
 Що відбувається на сервері:
-1. Бере `code` з query-параметра
-2. Обмінює його на `id_token` через Microsoft token endpoint
-3. Валідує `id_token` і перевіряє домен пошти (має бути `@KROK_DOMAIN`)
-4. Створює/оновлює користувача, генерує `access_token` і `refresh_token`
-5. Повертає **не JSON, а готову HTML-сторінку** (`text/html`), яка:
+1. Бере `code` з query-параметра.
+2. Обмінює його на `id_token` через Microsoft token endpoint, використовуючи той самий фіксований backend `redirect_uri`.
+3. Декодує `state` і отримує бажаний фронтенд URL, перевіряє його проти `ALLOWED_FRONTEND_REDIRECTS`.
+4. Валідує `id_token` і перевіряє домен пошти (має бути `@KROK_DOMAIN`).
+5. Створює/оновлює користувача, генерує `access_token` і `refresh_token`.
+6. Повертає **не JSON, а готову HTML-сторінку** (`text/html`), яка:
    - показує спінер "Логіну вас..."
    - JS-скриптом кладе токени в `localStorage`
-   - через 1 секунду редіректить на `/dashboard`
+   - через 1 секунду редіректить на отриманий фронтенд URL (або `FRONTEND_DEFAULT_REDIRECT`, якщо `state` невалідний)
+
+**Як працює `state`:**
+- У POST `/login/` frontend передає бажаний URL у полі `redirect`.
+- Бекенд безпечно кодує його в `state`.
+- Azure повертає `state` назад у query params callback'у.
+- Бекенд розкодовує `state` і використовує його лише для фінального редіректу на фронтенд.
 
 **Що покаже прямий перехід за посиланням без `?code=...`** (як у вашому запиті):
 HTML-сторінка з повідомленням про помилку (⚠️ **"Помилка входу"**, текст `Missing code`), статус **400 Bad Request**, і кнопка "Спробувати знову" (веде на `/login`). Тобто ніякого JSON — просто сторінка помилки, бо `code` беруть із query, а Azure ще не встиг його підставити.

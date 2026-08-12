@@ -3,7 +3,9 @@ from django.urls import reverse
 from django.conf import settings
 from apps.users.models import User, RefreshToken
 from apps.users.services import create_access_token, create_refresh_token, verify_refresh_token
+import base64
 import jwt
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch, MagicMock
 from apps.users.services import revoke_refresh_token
 from django.utils import timezone
@@ -24,10 +26,19 @@ class AuthTests(TestCase):
         found = verify_refresh_token(raw)
         self.assertIsNotNone(found)
 
-    def test_login_endpoint_returns_auth_url(self):
-        r = self.client.post('/api/v1/auth/login/', {'redirect': 'http://localhost/callback'}, content_type='application/json')
+    def test_login_uses_fixed_redirect_uri_and_state(self):
+        frontend_redirect = 'https://bevziuk2005.github.io/KROK-AI-FrontEnd/dashboard'
+        r = self.client.post('/api/v1/auth/login/', {'redirect': frontend_redirect}, content_type='application/json')
         self.assertEqual(r.status_code, 200)
-        self.assertIn('auth_url', r.json())
+        auth_url = r.json()['auth_url']
+
+        params = parse_qs(urlsplit(auth_url).query)
+        self.assertEqual(params['redirect_uri'][0], settings.MS_REDIRECT_URI)
+        self.assertNotEqual(params['redirect_uri'][0], frontend_redirect)
+
+        state = params['state'][0]
+        decoded = base64.urlsafe_b64decode(state + '=' * (-len(state) % 4)).decode()
+        self.assertEqual(decoded, frontend_redirect)
 
     @patch('apps.users.views.requests.post')
     @patch('apps.users.microsoft.verify_id_token')

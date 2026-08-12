@@ -1,7 +1,8 @@
+import base64
 import hashlib
 import logging
 import requests
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -15,6 +16,68 @@ from .permissions import IsAuthenticatedCustom
 logger = logging.getLogger(__name__)
 
 
+def _get_allowed_frontend_redirects():
+    raw = getattr(settings, 'ALLOWED_FRONTEND_REDIRECTS', '')
+    return [value.strip().rstrip('/') for value in raw.split(',') if value.strip()]
+
+
+def _is_allowed_frontend_redirect(frontend_redirect):
+    if not frontend_redirect:
+        return False
+    try:
+        target = urlsplit(frontend_redirect)
+    except ValueError:
+        return False
+    if not target.scheme or not target.hostname:
+        return False
+
+    target_host = target.hostname.lower()
+    for allowed in _get_allowed_frontend_redirects():
+        try:
+            allowed_url = urlsplit(allowed)
+        except ValueError:
+            continue
+        if not allowed_url.scheme or not allowed_url.hostname:
+            continue
+        allowed_host = allowed_url.hostname.lower()
+        if target_host == allowed_host or target_host.endswith(f'.{allowed_host}'):
+            return True
+    return False
+
+
+def _resolve_frontend_redirect(frontend_redirect):
+    default_redirect = getattr(settings, 'FRONTEND_DEFAULT_REDIRECT', '')
+    if not frontend_redirect:
+        return default_redirect
+    if _is_allowed_frontend_redirect(frontend_redirect):
+        return frontend_redirect.rstrip('/')
+    return default_redirect
+
+
+def _encode_frontend_redirect(frontend_redirect):
+    safe_redirect = _resolve_frontend_redirect(frontend_redirect)
+    encoded = base64.urlsafe_b64encode(safe_redirect.encode('utf-8')).decode('ascii')
+    return encoded.rstrip('=')
+
+
+def _decode_frontend_redirect(state):
+    if not state:
+        return _resolve_frontend_redirect('')
+    try:
+        padded = state + ('=' * (-len(state) % 4))
+        decoded = base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8')
+        return _resolve_frontend_redirect(decoded)
+    except Exception:
+        return _resolve_frontend_redirect('')
+
+
+def _frontend_login_url(frontend_redirect):
+    safe_redirect = _resolve_frontend_redirect(frontend_redirect)
+    if not safe_redirect:
+        return '/login'
+    return f"{safe_redirect.rstrip('/')}/login"
+
+
 class MicrosoftLoginView(APIView):
     """Return Microsoft OAuth2 authorize URL for frontend to redirect to."""
     permission_classes = [permissions.AllowAny]
@@ -22,14 +85,15 @@ class MicrosoftLoginView(APIView):
     def post(self, request):
         serializer = MicrosoftLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        redirect_uri = serializer.validated_data.get('redirect') or settings.MS_REDIRECT_URI
+
+        frontend_redirect = _resolve_frontend_redirect(serializer.validated_data.get('redirect'))
         params = {
             'client_id': settings.MS_CLIENT_ID,
             'response_type': 'code',
-            'redirect_uri': redirect_uri,
+            'redirect_uri': settings.MS_REDIRECT_URI,
             'response_mode': 'query',
             'scope': 'openid email profile',
-            'state': 'state',
+            'state': _encode_frontend_redirect(frontend_redirect),
         }
         auth_url = f"https://login.microsoftonline.com/{settings.MS_TENANT_ID}/oauth2/v2.0/authorize?{urlencode(params)}"
         return Response({'auth_url': auth_url})
@@ -41,82 +105,74 @@ class MicrosoftCallbackView(APIView):
     def get(self, request):
         """Handle Azure GET redirect with code in query params"""
         code = request.query_params.get('code')
-        redirect_uri = request.query_params.get('redirect_uri') or settings.MS_REDIRECT_URI
-        
+        frontend_redirect = _decode_frontend_redirect(request.query_params.get('state'))
+
         if not code:
             return Response({'detail': 'Missing code'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Exchange code for id_token
         token_url = f"https://login.microsoftonline.com/{settings.MS_TENANT_ID}/oauth2/v2.0/token"
         data = {
             'client_id': settings.MS_CLIENT_ID,
             'client_secret': settings.MS_CLIENT_SECRET,
             'grant_type': 'authorization_code',
             'code': code,
-            'redirect_uri': redirect_uri,
+            'redirect_uri': settings.MS_REDIRECT_URI,
         }
-        
+
         try:
             r = requests.post(token_url, data=data, timeout=10)
             if r.status_code != 200:
                 error_msg = r.text
                 logger.error(f'Token exchange failed: {error_msg}')
-                # Повертай HTML зі помилкою
-                return self._error_html(f'Token exchange failed: {error_msg}')
-            
+                return self._error_html(f'Token exchange failed: {error_msg}', frontend_redirect=frontend_redirect)
+
             token_data = r.json()
             id_token = token_data.get('id_token')
-            
-            # Verify id_token signature and claims
+
             from .microsoft import verify_id_token
             try:
                 claims = verify_id_token(id_token)
             except Exception as exc:
                 logger.error(f'Invalid id_token: {exc}')
-                return self._error_html(f'Invalid token: {str(exc)}')
+                return self._error_html(f'Invalid token: {str(exc)}', frontend_redirect=frontend_redirect)
 
-            # Validate email domain
             email = claims.get('email') or claims.get('upn')
             if not email or not email.endswith(f"@{settings.KROK_DOMAIN}"):
                 logger.warning(f'Email domain not allowed: {email}')
-                return self._error_html(f'Email domain not allowed. Use @{settings.KROK_DOMAIN}')
+                return self._error_html(f'Email domain not allowed. Use @{settings.KROK_DOMAIN}', frontend_redirect=frontend_redirect)
 
-            # Create or update user
             user, created = User.objects.get_or_create(
-                email=email, 
+                email=email,
                 defaults={
                     'created_at': timezone.now(),
                     'first_name': claims.get('given_name', ''),
                     'last_name': claims.get('family_name', ''),
                 }
             )
-            
+
             if not created:
                 user.first_name = claims.get('given_name', '')
                 user.last_name = claims.get('family_name', '')
                 user.save()
 
-            # Generate JWT tokens
             access = create_access_token(user)
             raw_refresh, rt = create_refresh_token(user)
 
             logger.info(f'User {email} authenticated successfully')
-            
-            # Return HTML that stores tokens and redirects
-            return self._success_html(access, raw_refresh)
+            return self._success_html(access, raw_refresh, frontend_redirect=frontend_redirect)
 
         except requests.RequestException as e:
             logger.error(f'Request error during token exchange: {e}')
-            return self._error_html(f'Request error: {str(e)}')
+            return self._error_html(f'Request error: {str(e)}', frontend_redirect=frontend_redirect)
         except Exception as e:
             logger.exception('Unexpected error in callback')
-            return self._error_html(f'Unexpected error: {str(e)}')
+            return self._error_html(f'Unexpected error: {str(e)}', frontend_redirect=frontend_redirect)
 
     def post(self, request):
         """Handle POST requests (for backward compatibility)"""
         code = request.data.get('code') or request.query_params.get('code')
-        redirect_uri = request.data.get('redirect') or settings.MS_REDIRECT_URI
-        
+        frontend_redirect = _decode_frontend_redirect(request.data.get('state') or request.query_params.get('state'))
+
         if not code:
             return Response({'detail': 'Missing code'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -126,18 +182,18 @@ class MicrosoftCallbackView(APIView):
             'client_secret': settings.MS_CLIENT_SECRET,
             'grant_type': 'authorization_code',
             'code': code,
-            'redirect_uri': redirect_uri,
+            'redirect_uri': settings.MS_REDIRECT_URI,
         }
-        
+
         try:
             r = requests.post(token_url, data=data, timeout=10)
             if r.status_code != 200:
                 logger.error(f'Token exchange failed: {r.text}')
                 return Response({'detail': 'Token exchange failed', 'error': r.text}, status=status.HTTP_400_BAD_REQUEST)
-            
+
             token_data = r.json()
             id_token = token_data.get('id_token')
-            
+
             from .microsoft import verify_id_token
             try:
                 claims = verify_id_token(id_token)
@@ -158,7 +214,7 @@ class MicrosoftCallbackView(APIView):
                     'last_name': claims.get('family_name', ''),
                 }
             )
-            
+
             if not created:
                 user.first_name = claims.get('given_name', '')
                 user.last_name = claims.get('family_name', '')
@@ -174,7 +230,7 @@ class MicrosoftCallbackView(APIView):
             logger.exception('Error in POST callback')
             return Response({'detail': 'Authentication failed', 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-    def _success_html(self, access_token, refresh_token):
+    def _success_html(self, access_token, refresh_token, frontend_redirect=None):
         """Return HTML that stores tokens and redirects to dashboard"""
         html = f'''
         <!DOCTYPE html>
@@ -233,15 +289,10 @@ class MicrosoftCallbackView(APIView):
                 // Зберегти токени
                 localStorage.setItem('access_token', '{access_token}');
                 localStorage.setItem('refresh_token', '{refresh_token}');
-                
-                // Редірегуй на фронтенд
-                // Зміни URL на твій фронтенд домен
+
+                const frontendRedirect = '{_resolve_frontend_redirect(frontend_redirect)}';
                 setTimeout(() => {{
-                    // ОПЦІЯ 1: Якщо фронтенд на тому ж домені
-                    window.location.href = '/dashboard';
-                    
-                    // ОПЦІЯ 2: Якщо фронтенд на іншому домені
-                    // window.location.href = 'https://твій-фронтенд.com/dashboard';
+                    window.location.href = frontendRedirect || '/dashboard';
                 }}, 1000);
             </script>
         </body>
@@ -249,8 +300,9 @@ class MicrosoftCallbackView(APIView):
         '''
         return Response(html, content_type='text/html')
 
-    def _error_html(self, error_msg):
+    def _error_html(self, error_msg, frontend_redirect=None):
         """Return HTML that shows error"""
+        login_url = _frontend_login_url(frontend_redirect)
         html = f'''
         <!DOCTYPE html>
         <html>
@@ -319,7 +371,7 @@ class MicrosoftCallbackView(APIView):
                 <h1>Помилка входу</h1>
                 <div class="message">{error_msg}</div>
                 <p>На жаль, не вдалося вас авторізувати</p>
-                <a href="/login">Спробувати знову</a>
+                <a href="{login_url}">Спробувати знову</a>
             </div>
         </body>
         </html>

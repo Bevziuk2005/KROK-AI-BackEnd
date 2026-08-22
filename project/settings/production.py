@@ -4,6 +4,14 @@ from django.core.exceptions import ImproperlyConfigured
 
 DEBUG = False
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',') if os.getenv('ALLOWED_HOSTS') else ['*']
+IS_PRODUCTION_STRICT = os.getenv('DEBUG_AUTH_ERRORS', 'false').lower() != 'true'
+ADMINS = []
+
+LOGGING['loggers']['apps.users'] = {
+    'handlers': ['console'],
+    'level': os.getenv('LOG_LEVEL', 'INFO'),
+    'propagate': False,
+}
 
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SESSION_COOKIE_SECURE = True

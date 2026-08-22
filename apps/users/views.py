@@ -120,19 +120,29 @@ class MicrosoftCallbackView(APIView):
         }
 
         try:
-            r = requests.post(token_url, data=data, timeout=10)
+            try:
+                r = requests.post(token_url, data=data, timeout=10)
+            except Exception:
+                logger.exception('Auth callback token exchange failed')
+                raise
+
             if r.status_code != 200:
                 error_msg = r.text
                 logger.error(f'Token exchange failed: {error_msg}')
                 return self._error_html(f'Token exchange failed: {error_msg}', frontend_redirect=frontend_redirect)
 
-            token_data = r.json()
-            id_token = token_data.get('id_token')
+            try:
+                token_data = r.json()
+                id_token = token_data.get('id_token')
+            except Exception:
+                logger.exception('Auth callback token response parsing failed')
+                raise
 
             from .microsoft import verify_id_token
             try:
                 claims = verify_id_token(id_token)
             except Exception as exc:
+                logger.exception('Auth callback id_token verification failed')
                 logger.error(f'Invalid id_token: {exc}')
                 return self._error_html(f'Invalid token: {str(exc)}', frontend_redirect=frontend_redirect)
 
@@ -141,22 +151,30 @@ class MicrosoftCallbackView(APIView):
                 logger.warning(f'Email domain not allowed: {email}')
                 return self._error_html(f'Email domain not allowed. Use @{settings.KROK_DOMAIN}', frontend_redirect=frontend_redirect)
 
-            user, created = User.objects.get_or_create(
-                email=email,
-                defaults={
-                    'created_at': timezone.now(),
-                    'first_name': claims.get('given_name', ''),
-                    'last_name': claims.get('family_name', ''),
-                }
-            )
+            try:
+                user, created = User.objects.get_or_create(
+                    email=email,
+                    defaults={
+                        'created_at': timezone.now(),
+                        'first_name': claims.get('given_name', ''),
+                        'last_name': claims.get('family_name', ''),
+                    }
+                )
 
-            if not created:
-                user.first_name = claims.get('given_name', '')
-                user.last_name = claims.get('family_name', '')
-                user.save()
+                if not created:
+                    user.first_name = claims.get('given_name', '')
+                    user.last_name = claims.get('family_name', '')
+                    user.save()
+            except Exception:
+                logger.exception('Auth callback user database operation failed')
+                raise
 
-            access = create_access_token(user)
-            raw_refresh, rt = create_refresh_token(user)
+            try:
+                access = create_access_token(user)
+                raw_refresh, rt = create_refresh_token(user)
+            except Exception:
+                logger.exception('Auth callback JWT generation failed')
+                raise
 
             logger.info(f'User {email} authenticated successfully')
             return self._success_html(access, raw_refresh, frontend_redirect=frontend_redirect)
@@ -165,8 +183,13 @@ class MicrosoftCallbackView(APIView):
             logger.error(f'Request error during token exchange: {e}')
             return self._error_html(f'Request error: {str(e)}', frontend_redirect=frontend_redirect)
         except Exception as e:
-            logger.exception('Unexpected error in callback')
-            return self._error_html(f'Unexpected error: {str(e)}', frontend_redirect=frontend_redirect)
+            logger.exception(f'Auth callback failed: {e}')
+            if not settings.IS_PRODUCTION_STRICT:
+                detail = str(e)
+                if settings.MS_CLIENT_SECRET:
+                    detail = detail.replace(settings.MS_CLIENT_SECRET, '[REDACTED]')
+                return Response({'detail': detail}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return self._error_html('Authentication failed', frontend_redirect=frontend_redirect)
 
     def post(self, request):
         """Handle POST requests (for backward compatibility)"""

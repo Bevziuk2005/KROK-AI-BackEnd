@@ -1,4 +1,4 @@
-from django.test import TestCase, Client
+from django.test import TestCase, Client, override_settings
 from django.urls import reverse
 from django.conf import settings
 from apps.users.models import User, RefreshToken
@@ -39,6 +39,19 @@ class AuthTests(TestCase):
         state = params['state'][0]
         decoded = base64.urlsafe_b64decode(state + '=' * (-len(state) % 4)).decode()
         self.assertEqual(decoded, frontend_redirect)
+
+    def test_callback_error_html_hides_details_by_default(self):
+        response = self.client.get('/api/v1/auth/callback/')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Authentication failed', response.content.decode())
+        self.assertNotIn('Missing code', response.content.decode())
+
+    @override_settings(DEBUG_AUTH_ERRORS=True)
+    def test_callback_error_html_can_show_details_for_debugging(self):
+        response = self.client.get('/api/v1/auth/callback/')
+
+        self.assertIn('Missing code', response.content.decode())
 
     @patch('apps.users.views.requests.post')
     @patch('apps.users.microsoft.verify_id_token')

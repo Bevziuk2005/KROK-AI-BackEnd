@@ -326,6 +326,7 @@ class MicrosoftCallbackView(APIView):
     def _error_html(self, error_msg, frontend_redirect=None):
         """Return HTML that shows error"""
         login_url = _frontend_login_url(frontend_redirect)
+        displayed_error = error_msg if settings.DEBUG_AUTH_ERRORS else 'Authentication failed'
         html = f'''
         <!DOCTYPE html>
         <html>
@@ -392,7 +393,7 @@ class MicrosoftCallbackView(APIView):
             <div class="container">
                 <div class="error">⚠️</div>
                 <h1>Помилка входу</h1>
-                <div class="message">{error_msg}</div>
+                <div class="message">{displayed_error}</div>
                 <p>На жаль, не вдалося вас авторізувати</p>
                 <a href="{login_url}">Спробувати знову</a>
             </div>

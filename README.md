@@ -67,6 +67,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 - `SECRET_KEY` — обов’язковий для Django; у production без нього піднімається `ImproperlyConfigured` під час старту.
 - `CORS_ALLOWED_ORIGINS` — для production бажано задати список дозволених origin, розділений комами.
 - `ALLOWED_HOSTS` — для production бажано задати список хостів, розділений комами.
+- `DEBUG_AUTH_ERRORS` — за замовчуванням `false`, тому GET callback показує загальне повідомлення замість внутрішніх деталей. Тимчасово встановіть `true` для діагностики.
 
 У поточній конфігурації саме `SECRET_KEY` має явну перевірку на старті; для `CORS_ALLOWED_ORIGINS` і `ALLOWED_HOSTS` значення слід задати явно, щоб уникнути неочікуваних налаштувань у продакшні.
 
@@ -189,7 +190,7 @@ curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/login/ \
 **Що покаже прямий перехід за посиланням без `?code=...`** (як у вашому запиті):
 HTML-сторінка з повідомленням про помилку (⚠️ **"Помилка входу"**, текст `Missing code`), статус **400 Bad Request**, і кнопка "Спробувати знову" (веде на `/login`). Тобто ніякого JSON — просто сторінка помилки, бо `code` беруть із query, а Azure ще не встиг його підставити.
 
-Приклад HTML-відповіді при помилці:
+Приклад HTML-відповіді при помилці (з `DEBUG_AUTH_ERRORS=true`):
 ```
 ⚠️ Помилка входу
 Missing code
@@ -201,7 +202,7 @@ Missing code
 - обмін коду на токен не вдався (`Token exchange failed: ...`)
 - `id_token` невалідний (`Invalid token: ...`)
 - email не з дозволеного домену (`Email domain not allowed. Use @...`)
-- будь-яка інша непередбачена помилка (`Unexpected error: ...`)
+- будь-яка інша непередбачена помилка (у production за замовчуванням показується `Authentication failed`; деталі доступні лише з `DEBUG_AUTH_ERRORS=true`)
 
 ---
 
@@ -260,8 +261,7 @@ curl -X POST https://krok-ai-back.onrender.com/api/v1/auth/refresh/ \
   -d '{
     "refresh_token": "eyJhbGciOiJIUzI1NiIs..."
   }'
-```
-
+`
 **Response (200 OK):**
 ```json
 {

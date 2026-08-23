@@ -13,6 +13,7 @@ if not SECRET_KEY:
         raise ImproperlyConfigured('SECRET_KEY environment variable is required')
     SECRET_KEY = 'dev-secret-key-for-local-development'
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
+DEBUG_AUTH_ERRORS = os.getenv('DEBUG_AUTH_ERRORS', 'false').lower() == 'true'
 ALLOWED_HOSTS = [host.strip() for host in os.getenv('ALLOWED_HOSTS', '').split(',') if host.strip()]
 
 INSTALLED_APPS = [

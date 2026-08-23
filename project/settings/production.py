@@ -4,7 +4,7 @@ from django.core.exceptions import ImproperlyConfigured
 
 DEBUG = False
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',') if os.getenv('ALLOWED_HOSTS') else ['*']
-IS_PRODUCTION_STRICT = os.getenv('DEBUG_AUTH_ERRORS', 'false').lower() != 'true'
+IS_PRODUCTION_STRICT = not DEBUG_AUTH_ERRORS
 ADMINS = []
 
 LOGGING['loggers']['apps.users'] = {
